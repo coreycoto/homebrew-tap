@@ -4,9 +4,9 @@ class GitSlop < Formula
   desc "Local-first hotspot detection for AI-era repositories"
   homepage "https://github.com/coreycoto/git-slop"
   url "ssh://git@github.com/coreycoto/git-slop.git",
-      tag:      "v0.7.2",
-      revision: "405cc8928c3adf891a75e17ed438aa2c4b2dbcd2"
-  version "0.7.2"
+      tag:      "v0.7.3",
+      revision: "e6efac2132906719a5c74259e97d2a5fa19eede3"
+  version "0.7.3"
   license "MIT"
 
   depends_on "rust" => :build
@@ -56,78 +56,7 @@ class GitSlop < Formula
 
   def install
     virtualenv_install_with_resources using: "python3.13"
-    if File.exist?("man/git-slop.1")
-      man1.install "man/git-slop.1"
-    else
-      (man1/"git-slop.1").write <<~'MANPAGE'
-        .TH GIT-SLOP 1
-        .SH NAME
-        git-slop \- find files that cost too much context
-        .SH SYNOPSIS
-        .B git-slop
-        .RI [ -h | --help ]
-        .I command
-        .RI [ args... ]
-        .br
-        .B git slop
-        .RI [ -h ]
-        .I command
-        .RI [ args... ]
-        .SH DESCRIPTION
-        .B git-slop
-        scans a repository for files and folders that create high context cost for
-        AI-assisted maintenance. It reports hotspots, explains selected findings, and
-        plans bounded maintenance slices from detector output.
-        .PP
-        When installed on
-        .BR PATH ,
-        Git can run the command as
-        .BR "git slop" .
-        Git handles
-        .B "git slop --help"
-        as a request for this manual page. Use
-        .B "git slop -h"
-        or
-        .B "git-slop --help"
-        for the concise command-line help.
-        .SH COMMANDS
-        .TP
-        .B init
-        Scaffold
-        .BR .slop/
-        configuration, ignore rules, and state directories.
-        .TP
-        .B find
-        Scan the repository and generate hotspot reports.
-        .TP
-        .B show
-        Show metrics and reasons for one file or folder.
-        .TP
-        .B explain
-        Explain why selected hotspots or structural findings are expensive.
-        .TP
-        .B plan
-        Propose bounded maintenance slices from the current detector report.
-        .TP
-        .B check
-        Evaluate an existing report against CI thresholds.
-        .TP
-        .B version
-        Print version information.
-        .SH EXAMPLES
-        .TP
-        .B git slop find
-        Generate the default detector report for the current repository.
-        .TP
-        .B git slop show README.md
-        Show detector metrics and reasons for a specific path.
-        .TP
-        .B git slop plan --path src/git_slop
-        Propose bounded maintenance slices for a selected path.
-        .SH SEE ALSO
-        .BR git (1)
-      MANPAGE
-    end
+    man1.install "man/git-slop.1"
   end
 
   test do

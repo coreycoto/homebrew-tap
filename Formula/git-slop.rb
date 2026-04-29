@@ -1,12 +1,49 @@
+require "json"
+require "net/http"
+require "uri"
+
 class GitSlopPrivateReleaseDownloadStrategy < CurlDownloadStrategy
   def initialize(url, name, version, **meta)
-    token = ENV["HOMEBREW_GITHUB_API_TOKEN"] || ENV["GITHUB_TOKEN"] || ENV["GH_TOKEN"]
-    odie "Set HOMEBREW_GITHUB_API_TOKEN, GITHUB_TOKEN, or GH_TOKEN with access to coreycoto/git-slop." if token.blank?
+    @asset_name = meta.delete(:asset_name)
+    @github_token = ENV["HOMEBREW_GITHUB_API_TOKEN"] || ENV["GITHUB_TOKEN"] || ENV["GH_TOKEN"]
+    if @github_token.blank?
+      odie "Set HOMEBREW_GITHUB_API_TOKEN, GITHUB_TOKEN, or GH_TOKEN with access to coreycoto/git-slop."
+    end
 
     meta[:headers] ||= []
-    meta[:headers] << "Authorization: Bearer #{token}"
+    meta[:headers] << "Authorization: Bearer #{@github_token}"
     meta[:headers] << "Accept: application/octet-stream"
     super
+  end
+
+  private
+
+  def resolve_url_basename_time_file_size(url, timeout: nil)
+    super(resolve_asset_api_url(url), timeout: timeout)
+  end
+
+  def _fetch(url:, resolved_url:, timeout:)
+    super(url: resolve_asset_api_url(url), resolved_url: resolved_url, timeout: timeout)
+  end
+
+  def resolve_asset_api_url(release_api_url)
+    return release_api_url if release_api_url.include?("/releases/assets/")
+
+    @resolve_asset_api_url ||= begin
+      uri = URI(release_api_url)
+      request = Net::HTTP::Get.new(uri)
+      request["Authorization"] = "Bearer #{@github_token}"
+      request["Accept"] = "application/vnd.github+json"
+      response = Net::HTTP.start(uri.hostname, uri.port, use_ssl: true) do |http|
+        http.request(request)
+      end
+      unless response.is_a?(Net::HTTPSuccess)
+        odie "Unable to read git-slop release metadata from #{release_api_url}: HTTP #{response.code}"
+      end
+      asset = JSON.parse(response.body).fetch("assets").find { |candidate| candidate.fetch("name") == @asset_name }
+      odie "Release asset #{@asset_name} was not found in #{release_api_url}." if asset.nil?
+      asset.fetch("url")
+    end
   end
 end
 
@@ -15,7 +52,10 @@ class GitSlop < Formula
 
   desc "Local-first hotspot detection for AI-era repositories"
   homepage "https://github.com/coreycoto/git-slop"
-  url "https://github.com/coreycoto/git-slop/releases/download/v0.7.2/git_slop-0.7.2-py3-none-any.whl", using: GitSlopPrivateReleaseDownloadStrategy
+  url "https://api.github.com/repos/coreycoto/git-slop/releases/tags/v0.7.2",
+      using:      GitSlopPrivateReleaseDownloadStrategy,
+      asset_name: "git_slop-0.7.2-py3-none-any.whl"
+  version "0.7.2"
   sha256 "d183c2243e2d17e64a1545db02c7feb7a5582472a73060aa491cbbba61c9ef5e"
   license "MIT"
 

@@ -31,6 +31,7 @@ class GitSlopPrivateReleaseDownloadStrategy < CurlDownloadStrategy
 
     @resolve_asset_api_url ||= begin
       uri = URI(release_api_url)
+      uri.query = nil
       request = Net::HTTP::Get.new(uri)
       request["Authorization"] = "Bearer #{@github_token}"
       request["Accept"] = "application/vnd.github+json"
@@ -40,7 +41,9 @@ class GitSlopPrivateReleaseDownloadStrategy < CurlDownloadStrategy
       unless response.is_a?(Net::HTTPSuccess)
         odie "Unable to read git-slop release metadata from #{release_api_url}: HTTP #{response.code}"
       end
-      asset = JSON.parse(response.body).fetch("assets").find { |candidate| candidate.fetch("name") == @asset_name }
+      asset = JSON.parse(response.body).fetch("assets").find do |candidate|
+        candidate.fetch("name") == @asset_name
+      end
       odie "Release asset #{@asset_name} was not found in #{release_api_url}." if asset.nil?
       asset.fetch("url")
     end
@@ -52,7 +55,7 @@ class GitSlop < Formula
 
   desc "Local-first hotspot detection for AI-era repositories"
   homepage "https://github.com/coreycoto/git-slop"
-  url "https://api.github.com/repos/coreycoto/git-slop/releases/tags/v0.7.2",
+  url "https://api.github.com/repos/coreycoto/git-slop/releases/tags/v0.7.2?asset=git_slop-0.7.2.tar.gz",
       using:      GitSlopPrivateReleaseDownloadStrategy,
       asset_name: "git_slop-0.7.2.tar.gz"
   version "0.7.2"

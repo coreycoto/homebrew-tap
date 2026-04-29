@@ -54,9 +54,9 @@ class GitSlop < Formula
   homepage "https://github.com/coreycoto/git-slop"
   url "https://api.github.com/repos/coreycoto/git-slop/releases/tags/v0.7.2",
       using:      GitSlopPrivateReleaseDownloadStrategy,
-      asset_name: "git_slop-0.7.2-py3-none-any.whl"
+      asset_name: "git_slop-0.7.2.tar.gz"
   version "0.7.2"
-  sha256 "d183c2243e2d17e64a1545db02c7feb7a5582472a73060aa491cbbba61c9ef5e"
+  sha256 "d033fd8ab71f123785d63e5b2aa9e97f1991b7d7ff5c4b18a5bb6b78a3ad7fd1"
   license "MIT"
 
   depends_on "rust" => :build

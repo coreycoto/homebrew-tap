@@ -3,7 +3,7 @@ class GitSlop < Formula
 
   desc "Local-first hotspot detection for AI-era repositories"
   homepage "https://github.com/coreycoto/git-slop"
-  url "git@github.com:coreycoto/git-slop.git",
+  url "ssh://git@github.com/coreycoto/git-slop.git",
       tag:      "v0.7.2",
       revision: "405cc8928c3adf891a75e17ed438aa2c4b2dbcd2"
   version "0.7.2"

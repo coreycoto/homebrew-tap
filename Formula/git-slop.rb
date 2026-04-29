@@ -1,9 +1,21 @@
+class GitSlopPrivateReleaseDownloadStrategy < CurlDownloadStrategy
+  def initialize(url, name, version, **meta)
+    token = ENV["HOMEBREW_GITHUB_API_TOKEN"] || ENV["GITHUB_TOKEN"] || ENV["GH_TOKEN"]
+    odie "Set HOMEBREW_GITHUB_API_TOKEN, GITHUB_TOKEN, or GH_TOKEN with access to coreycoto/git-slop." if token.blank?
+
+    meta[:headers] ||= []
+    meta[:headers] << "Authorization: Bearer #{token}"
+    meta[:headers] << "Accept: application/octet-stream"
+    super
+  end
+end
+
 class GitSlop < Formula
   include Language::Python::Virtualenv
 
   desc "Local-first hotspot detection for AI-era repositories"
   homepage "https://github.com/coreycoto/git-slop"
-  url "https://github.com/coreycoto/git-slop/releases/download/v0.7.2/git_slop-0.7.2-py3-none-any.whl"
+  url "https://github.com/coreycoto/git-slop/releases/download/v0.7.2/git_slop-0.7.2-py3-none-any.whl", using: GitSlopPrivateReleaseDownloadStrategy
   sha256 "d183c2243e2d17e64a1545db02c7feb7a5582472a73060aa491cbbba61c9ef5e"
   license "MIT"
 

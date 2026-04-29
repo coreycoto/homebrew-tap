@@ -3,8 +3,8 @@ class GitSlop < Formula
 
   desc "Local-first hotspot detection for AI-era repositories"
   homepage "https://github.com/coreycoto/git-slop"
-  url "https://github.com/coreycoto/git-slop/releases/download/v0.7.1/git_slop-0.7.1-py3-none-any.whl"
-  sha256 "b47e5a7397ca09fd23d3b92c955c4ce4bc82e845d294850eb28b89b6e6a00e40"
+  url "https://github.com/coreycoto/git-slop/releases/download/v0.7.2/git_slop-0.7.2-py3-none-any.whl"
+  sha256 "d183c2243e2d17e64a1545db02c7feb7a5582472a73060aa491cbbba61c9ef5e"
   license "MIT"
 
   depends_on "rust" => :build

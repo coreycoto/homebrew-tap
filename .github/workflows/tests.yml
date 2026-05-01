@@ -10,8 +10,8 @@ jobs:
   test-bot:
     strategy:
       matrix:
-        os: [macos-15-intel, macos-26]
         include:
+          - os: macos-26
           - os: ubuntu-latest
             container: ghcr.io/homebrew/brew:main
     runs-on: ${{ matrix.os }}

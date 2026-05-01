@@ -4,6 +4,8 @@ Homebrew tap for Corey Coto developer tools.
 
 ## git-slop
 
+Supported platforms: Apple Silicon macOS and Linux.
+
 ```bash
 brew tap coreycoto/tap
 brew install coreycoto/tap/git-slop

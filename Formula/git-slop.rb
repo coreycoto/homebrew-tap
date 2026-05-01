@@ -13,6 +13,10 @@ class GitSlop < Formula
   depends_on "libyaml"
   depends_on "python@3.13"
 
+  on_macos do
+    depends_on arch: :arm64
+  end
+
   resource "certifi" do
     url "https://files.pythonhosted.org/packages/af/2d/7bf41579a8986e348fa033a31cdd0e4121114f6bce2457e8876010b092dd/certifi-2026.2.25.tar.gz"
     sha256 "e887ab5cee78ea814d3472169153c2d12cd43b14bd03329a39a9c6e2e80bfba7"

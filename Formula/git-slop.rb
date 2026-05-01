@@ -4,9 +4,8 @@ class GitSlop < Formula
   desc "Local-first hotspot detection for AI-era repositories"
   homepage "https://github.com/coreycoto/git-slop"
   url "https://github.com/coreycoto/git-slop.git",
-      tag:      "v0.8.0",
-      revision: "6523ce6d00e61d6e416bd3bf357bd39442397055"
-  version "0.8.0"
+      tag:      "v0.8.1",
+      revision: "2f866fbdcdfeaba21c21f14ea622a4f81ee2ff9e"
   license "MIT"
 
   depends_on "rust" => :build

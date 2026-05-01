@@ -14,7 +14,8 @@ git slop version
 ```
 
 The `git-slop` formula is generated from the `coreycoto/git-slop` release
-manifest with `scripts/update_homebrew_formula.py` in that repository. 
+manifest with `scripts/update_homebrew_formula.py` in that repository. Installs
+should use the unauthenticated `brew tap coreycoto/tap` path.
 
 ## Bottle Publishing
 

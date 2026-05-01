@@ -4,15 +4,24 @@ class GitSlop < Formula
   desc "Local-first hotspot detection for AI-era repositories"
   homepage "https://github.com/coreycoto/git-slop"
   url "https://github.com/coreycoto/git-slop.git",
-      tag:      "v0.8.0",
-      revision: "6523ce6d00e61d6e416bd3bf357bd39442397055"
-  version "0.8.0"
+      tag:      "v0.8.1",
+      revision: "2f866fbdcdfeaba21c21f14ea622a4f81ee2ff9e"
   license "MIT"
+
+  bottle do
+    root_url "https://github.com/coreycoto/homebrew-tap/releases/download/git-slop-0.8.1"
+    sha256 cellar: :any,                 arm64_tahoe:  "0b561366fe9413d4c04307ff8252c8b6b2fae0eb1088d889bd55d1ed57c37076"
+    sha256 cellar: :any_skip_relocation, x86_64_linux: "f9509cfb818edc40cf7c7e1c71af531002a210e64312de5b3ea6bbbd9286b131"
+  end
 
   depends_on "rust" => :build
 
   depends_on "libyaml"
   depends_on "python@3.13"
+
+  on_macos do
+    depends_on arch: :arm64
+  end
 
   resource "certifi" do
     url "https://files.pythonhosted.org/packages/af/2d/7bf41579a8986e348fa033a31cdd0e4121114f6bce2457e8876010b092dd/certifi-2026.2.25.tar.gz"

@@ -2,10 +2,26 @@
 
 set -euo pipefail
 
+ruby_bin_override="${RUBY_BIN:-}"
+
 die() {
   printf 'error: %s\n' "$*" >&2
   exit 1
 }
+
+ruby_command=()
+if [[ -n "${ruby_bin_override}" ]]
+then
+  ruby_command=("${ruby_bin_override}")
+elif command -v ruby >/dev/null 2>&1
+then
+  ruby_command=(ruby)
+elif command -v brew >/dev/null 2>&1
+then
+  ruby_command=(brew ruby --)
+else
+  die "Ruby or Homebrew's portable Ruby is required"
+fi
 
 [[ $# -eq 2 ]] ||
   die "usage: verify-git-slop-formula-state.sh EXPECTED_FORMULA ACTUAL_FORMULA"
@@ -16,7 +32,7 @@ actual_formula="$2"
 [[ -f "${expected_formula}" ]] || die "expected formula is missing"
 [[ -f "${actual_formula}" ]] || die "actual formula is missing"
 
-ruby - "${expected_formula}" "${actual_formula}" <<'RUBY'
+"${ruby_command[@]}" - "${expected_formula}" "${actual_formula}" <<'RUBY'
 expected_path, actual_path = ARGV
 expected = File.binread(expected_path)
 actual_lines = File.binread(actual_path).lines

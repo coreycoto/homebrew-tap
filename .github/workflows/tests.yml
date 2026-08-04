@@ -115,9 +115,13 @@ jobs:
       - name: Detect formula changes
         id: formula_change
         run: |
-          if git diff --quiet origin/main...HEAD -- Formula/; then
+          formula_changes="$(
+            git diff --name-only --no-renames origin/main...HEAD -- Formula/
+          )"
+          if [[ -z "${formula_changes}" ]]; then
             echo 'changed=false' >> "${GITHUB_OUTPUT}"
           else
+            printf 'Changed formula paths:\n%s\n' "${formula_changes}"
             echo 'changed=true' >> "${GITHUB_OUTPUT}"
           fi
 

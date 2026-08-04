@@ -1,0 +1,529 @@
+name: Update git-slop formula
+
+run-name: Update git-slop to ${{ inputs.version }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Published git-slop version in strict X.Y.Z form
+        required: true
+        type: string
+      revision:
+        description: Exact 40-character source commit for the release
+        required: true
+        type: string
+      formula_url:
+        description: Canonical GitHub Release URL for git-slop.rb
+        required: true
+        type: string
+      formula_sha256:
+        description: SHA-256 of git-slop.rb
+        required: true
+        type: string
+      manifest_url:
+        description: Canonical GitHub Release URL for release-manifest.json
+        required: true
+        type: string
+      manifest_sha256:
+        description: SHA-256 of release-manifest.json
+        required: true
+        type: string
+      crate_url:
+        description: Canonical static.crates.io crate URL
+        required: true
+        type: string
+      crate_sha256:
+        description: SHA-256 of the published crate
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: git-slop-formula-publication
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+
+jobs:
+  update:
+    name: Verify release and open formula PR
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Check out trusted tap main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Verify dispatch ran from exact tap main
+        run: |
+          test "$GITHUB_REF" = "refs/heads/main"
+          origin_main="$(git rev-parse origin/main)"
+          live_main="$(
+            git ls-remote origin refs/heads/main |
+              awk 'NR == 1 { print $1 }'
+          )"
+          test -n "$live_main"
+          test "$GITHUB_SHA" = "$live_main"
+          test "$origin_main" = "$live_main"
+          test "$(git rev-parse HEAD)" = "$live_main"
+
+      - name: Verify release assets and crates.io source
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_REVISION: ${{ inputs.revision }}
+          FORMULA_URL: ${{ inputs.formula_url }}
+          FORMULA_SHA256: ${{ inputs.formula_sha256 }}
+          MANIFEST_URL: ${{ inputs.manifest_url }}
+          MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}
+          CRATE_URL: ${{ inputs.crate_url }}
+          CRATE_SHA256: ${{ inputs.crate_sha256 }}
+        run: scripts/verify-git-slop-release.sh "$RUNNER_TEMP/git-slop-release"
+
+      - name: Create or update the automation branch
+        id: branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_REVISION: ${{ inputs.revision }}
+          FORMULA_URL: ${{ inputs.formula_url }}
+          FORMULA_SHA256: ${{ inputs.formula_sha256 }}
+          MANIFEST_URL: ${{ inputs.manifest_url }}
+          MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}
+          CRATE_URL: ${{ inputs.crate_url }}
+          CRATE_SHA256: ${{ inputs.crate_sha256 }}
+        run: |
+          branch="automation/git-slop-v${RELEASE_VERSION}"
+          origin_main="$(git rev-parse origin/main)"
+          live_main="$(
+            git ls-remote origin refs/heads/main |
+              awk 'NR == 1 { print $1 }'
+          )"
+          test -n "$live_main"
+          test "$GITHUB_SHA" = "$live_main"
+          test "$origin_main" = "$live_main"
+          test "$(git rev-parse HEAD)" = "$live_main"
+          metadata_path="$RUNNER_TEMP/git-slop-release-metadata.json"
+          remote_sha="$(
+            git ls-remote origin "refs/heads/${branch}" |
+              awk 'NR == 1 { print $1 }'
+          )"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          jq -n \
+            --arg version "$RELEASE_VERSION" \
+            --arg revision "$RELEASE_REVISION" \
+            --arg formula_url "$FORMULA_URL" \
+            --arg formula_sha256 "$FORMULA_SHA256" \
+            --arg manifest_url "$MANIFEST_URL" \
+            --arg manifest_sha256 "$MANIFEST_SHA256" \
+            --arg crate_url "$CRATE_URL" \
+            --arg crate_sha256 "$CRATE_SHA256" \
+            '{
+              schema_version: 1,
+              project: "git-slop",
+              version: $version,
+              revision: $revision,
+              formula: {url: $formula_url, sha256: $formula_sha256},
+              release_manifest: {url: $manifest_url, sha256: $manifest_sha256},
+              crate_source: {url: $crate_url, sha256: $crate_sha256}
+            }' > "$metadata_path"
+
+          current_metadata_path="$RUNNER_TEMP/current-git-slop-release-metadata.json"
+          if git cat-file -e \
+            "${origin_main}:metadata/git-slop-release.json" 2>/dev/null
+          then
+            git show \
+              "${origin_main}:metadata/git-slop-release.json" \
+              > "$current_metadata_path"
+            jq -e '
+              (keys | sort) == [
+                "crate_source",
+                "formula",
+                "project",
+                "release_manifest",
+                "revision",
+                "schema_version",
+                "version"
+              ] and
+              .schema_version == 1 and
+              .project == "git-slop" and
+              (.version | type == "string") and
+              (.version | test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$")) and
+              (.revision | type == "string") and
+              (.formula | keys | sort) == ["sha256", "url"] and
+              (.release_manifest | keys | sort) == ["sha256", "url"] and
+              (.crate_source | keys | sort) == ["sha256", "url"]
+            ' "$current_metadata_path" >/dev/null || {
+              echo "Current git-slop release metadata on main is malformed." >&2
+              exit 1
+            }
+
+            current_version="$(jq -r .version "$current_metadata_path")"
+            if cmp -s "$current_metadata_path" "$metadata_path"; then
+              current_formula_path="$RUNNER_TEMP/current-git-slop.rb"
+              git show \
+                "${origin_main}:Formula/git-slop.rb" \
+                > "$current_formula_path"
+              scripts/verify-git-slop-formula-state.sh \
+                "$RUNNER_TEMP/git-slop-release/git-slop.rb" \
+                "$current_formula_path"
+              {
+                echo "changed=false"
+                echo "reused=false"
+                echo "published=true"
+                echo "branch=$branch"
+                echo "head_sha=$origin_main"
+              } >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            release_order="$(
+              jq -nr \
+                --arg current "$current_version" \
+                --arg incoming "$RELEASE_VERSION" '
+                  def semver: split(".") | map(tonumber);
+                  ($current | semver) as $current_parts |
+                  ($incoming | semver) as $incoming_parts |
+                  if $incoming_parts > $current_parts then
+                    "newer"
+                  elif $incoming_parts == $current_parts then
+                    "same"
+                  else
+                    "older"
+                  end
+                '
+            )"
+            case "$release_order" in
+              newer)
+                ;;
+              same)
+                echo "Release ${RELEASE_VERSION} is already represented on main with different immutable metadata." >&2
+                exit 1
+                ;;
+              older)
+                echo "Refusing git-slop downgrade from ${current_version} to ${RELEASE_VERSION}." >&2
+                exit 1
+                ;;
+              *)
+                echo "Unexpected release ordering result: ${release_order}" >&2
+                exit 1
+                ;;
+            esac
+          fi
+
+          if [[ -n "$remote_sha" ]]; then
+            git fetch --no-tags origin \
+              "refs/heads/${branch}:refs/remotes/origin/${branch}"
+            remote_parent="$(git rev-parse "${remote_sha}^")"
+            changed_files="$(
+              git diff --name-only --no-renames \
+                "${origin_main}...${remote_sha}" |
+                LC_ALL=C sort
+            )"
+            expected_files=$'Formula/git-slop.rb\nmetadata/git-slop-release.json'
+            if [[ "$remote_parent" == "$origin_main" ]] &&
+              [[ "$changed_files" == "$expected_files" ]] &&
+              cmp \
+                <(git show "${remote_sha}:Formula/git-slop.rb") \
+                "$RUNNER_TEMP/git-slop-release/git-slop.rb" &&
+              cmp \
+                <(git show "${remote_sha}:metadata/git-slop-release.json") \
+                "$metadata_path"
+            then
+              git switch --detach "$remote_sha"
+              {
+                echo "changed=true"
+                echo "reused=true"
+                echo "published=false"
+                echo "branch=$branch"
+                echo "head_sha=$remote_sha"
+              } >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            labeled_prs="$(
+              gh api --method GET "repos/${GITHUB_REPOSITORY}/pulls" \
+                -f state=open \
+                -f base=main \
+                -f head="${GITHUB_REPOSITORY_OWNER}:${branch}" \
+                --jq '[.[] | select(any(.labels[]?; .name == "pr-pull"))] | length'
+            )"
+            if [[ "$labeled_prs" != "0" ]]; then
+              echo "The existing formula PR carries the human pr-pull gate; refusing to rewrite its head." >&2
+              exit 1
+            fi
+          fi
+
+          git switch --force-create "$branch" origin/main
+          install -m 0644 \
+            "$RUNNER_TEMP/git-slop-release/git-slop.rb" \
+            Formula/git-slop.rb
+          mkdir -p metadata
+          install -m 0644 "$metadata_path" metadata/git-slop-release.json
+
+          git add Formula/git-slop.rb metadata/git-slop-release.json
+          if git diff --cached --quiet; then
+            {
+              echo "changed=false"
+              echo "reused=false"
+              echo "published=false"
+              echo "branch=$branch"
+              echo "head_sha=$(git rev-parse HEAD)"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git commit -m "git-slop: update to ${RELEASE_VERSION}"
+          head_sha="$(git rev-parse HEAD)"
+          live_main="$(
+            git ls-remote origin refs/heads/main |
+              awk 'NR == 1 { print $1 }'
+          )"
+          test "$live_main" = "$origin_main"
+          if [[ -n "$remote_sha" ]]; then
+            git push \
+              --force-with-lease="refs/heads/${branch}:${remote_sha}" \
+              origin "HEAD:refs/heads/${branch}"
+          else
+            git push origin "HEAD:refs/heads/${branch}"
+          fi
+
+          {
+            echo "changed=true"
+            echo "reused=false"
+            echo "published=false"
+            echo "branch=$branch"
+            echo "head_sha=$head_sha"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create or update the formula pull request
+        id: pull-request
+        if: steps.branch.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_REVISION: ${{ inputs.revision }}
+          FORMULA_SHA256: ${{ inputs.formula_sha256 }}
+          MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}
+          CRATE_SHA256: ${{ inputs.crate_sha256 }}
+          BRANCH: ${{ steps.branch.outputs.branch }}
+          HEAD_SHA: ${{ steps.branch.outputs.head_sha }}
+        run: |
+          live_main="$(
+            git ls-remote origin refs/heads/main |
+              awk 'NR == 1 { print $1 }'
+          )"
+          test -n "$live_main"
+          test "$GITHUB_SHA" = "$live_main"
+          test "$(git rev-parse "${HEAD_SHA}^")" = "$live_main"
+
+          pr_body="$RUNNER_TEMP/git-slop-pr-body.md"
+          cat > "$pr_body" <<EOF
+          ## Verified release
+
+          - Version: \`${RELEASE_VERSION}\`
+          - Revision: \`${RELEASE_REVISION}\`
+          - Formula SHA-256: \`${FORMULA_SHA256}\`
+          - Manifest SHA-256: \`${MANIFEST_SHA256}\`
+          - Crate SHA-256: \`${CRATE_SHA256}\`
+          - Formula head: \`${HEAD_SHA}\`
+
+          The update workflow verified the canonical GitHub Release assets,
+          schema-3 manifest identity, crates.io package digest and VCS metadata,
+          and an exact allowlisted Ruby formula before creating this branch.
+
+          The explicitly dispatched \`brew test-bot\` run must pass for this
+          exact head. A human must then apply the \`pr-pull\` label to publish
+          bottles and merge the update.
+          EOF
+
+          owner="${GITHUB_REPOSITORY_OWNER}"
+          pr_number="$(
+            gh api --method GET "repos/${GITHUB_REPOSITORY}/pulls" \
+              -f state=open \
+              -f base=main \
+              -f head="${owner}:${BRANCH}" \
+              --jq '.[0].number // empty'
+          )"
+          title="git-slop: update to ${RELEASE_VERSION}"
+          body="$(<"$pr_body")"
+          if [[ -z "$pr_number" ]]; then
+            pr_number="$(
+              gh api --method POST "repos/${GITHUB_REPOSITORY}/pulls" \
+                -f title="$title" \
+                -f head="$BRANCH" \
+                -f base=main \
+                -f body="$body" \
+                --jq .number
+            )"
+          else
+            gh api --method PATCH \
+              "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" \
+              -f title="$title" \
+              -f body="$body" >/dev/null
+          fi
+
+          echo "number=$pr_number" >> "$GITHUB_OUTPUT"
+          gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" --jq .html_url
+
+      - name: Reuse or dispatch tests for the exact formula head
+        id: tests
+        if: steps.branch.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.branch.outputs.branch }}
+          TRUSTED_HEAD_SHA: ${{ steps.branch.outputs.head_sha }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_REVISION: ${{ inputs.revision }}
+          FORMULA_URL: ${{ inputs.formula_url }}
+          FORMULA_SHA256: ${{ inputs.formula_sha256 }}
+          MANIFEST_URL: ${{ inputs.manifest_url }}
+          MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}
+          CRATE_URL: ${{ inputs.crate_url }}
+          CRATE_SHA256: ${{ inputs.crate_sha256 }}
+        run: |
+          dispatch_tests() {
+            gh workflow run tests.yml \
+              --repo "$GITHUB_REPOSITORY" \
+              --ref "$BRANCH" \
+              -f trusted_head_sha="$TRUSTED_HEAD_SHA" \
+              -f version="$RELEASE_VERSION" \
+              -f revision="$RELEASE_REVISION" \
+              -f formula_url="$FORMULA_URL" \
+              -f formula_sha256="$FORMULA_SHA256" \
+              -f manifest_url="$MANIFEST_URL" \
+              -f manifest_sha256="$MANIFEST_SHA256" \
+              -f crate_url="$CRATE_URL" \
+              -f crate_sha256="$CRATE_SHA256"
+            {
+              echo "reused=false"
+              echo "state=dispatched"
+              echo "run_id="
+              echo "run_url="
+            } >> "$GITHUB_OUTPUT"
+          }
+
+          runs_json="$RUNNER_TEMP/git-slop-test-runs.json"
+          gh api --method GET \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/tests.yml/runs" \
+            -f event=workflow_dispatch \
+            -f head_sha="$TRUSTED_HEAD_SHA" \
+            -f per_page=100 \
+            > "$runs_json"
+          run_json="$(
+            jq -c \
+              --arg head_sha "$TRUSTED_HEAD_SHA" \
+              --arg branch "$BRANCH" '
+                [
+                  .workflow_runs[] |
+                  select(
+                    .event == "workflow_dispatch" and
+                    .head_sha == $head_sha and
+                    .head_branch == $branch
+                  )
+                ] |
+                sort_by(.run_number) |
+                reverse |
+                .[0] // empty
+              ' "$runs_json"
+          )"
+
+          if [[ -z "$run_json" ]]; then
+            dispatch_tests
+            exit 0
+          fi
+
+          run_id="$(jq -r .id <<<"$run_json")"
+          run_url="$(jq -r .html_url <<<"$run_json")"
+          status="$(jq -r .status <<<"$run_json")"
+          conclusion="$(jq -r '.conclusion // ""' <<<"$run_json")"
+
+          case "$status" in
+            queued|in_progress|requested|waiting|pending)
+              {
+                echo "reused=true"
+                echo "state=$status"
+                echo "run_id=$run_id"
+                echo "run_url=$run_url"
+              } >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+            completed)
+              ;;
+            *)
+              dispatch_tests
+              exit 0
+              ;;
+          esac
+
+          if [[ "$conclusion" != "success" ]]; then
+            dispatch_tests
+            exit 0
+          fi
+
+          artifacts_json="$RUNNER_TEMP/git-slop-test-artifacts.json"
+          gh api --method GET \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts" \
+            -f per_page=100 \
+            > "$artifacts_json"
+          if ! jq -e '
+            .total_count == 2 and
+            ([.artifacts[] | select(.expired == false) | .name] | sort) ==
+              ["bottles_macos-26", "bottles_ubuntu-latest"]
+          ' "$artifacts_json" >/dev/null
+          then
+            dispatch_tests
+            exit 0
+          fi
+
+          {
+            echo "reused=true"
+            echo "state=completed-success"
+            echo "run_id=$run_id"
+            echo "run_url=$run_url"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Summarize handoff
+        if: always()
+        env:
+          CHANGED: ${{ steps.branch.outputs.changed }}
+          REUSED: ${{ steps.branch.outputs.reused }}
+          PUBLISHED: ${{ steps.branch.outputs.published }}
+          BRANCH: ${{ steps.branch.outputs.branch }}
+          HEAD_SHA: ${{ steps.branch.outputs.head_sha }}
+          PULL_REQUEST: ${{ steps.pull-request.outputs.number }}
+          TEST_REUSED: ${{ steps.tests.outputs.reused }}
+          TEST_STATE: ${{ steps.tests.outputs.state }}
+          TEST_RUN_URL: ${{ steps.tests.outputs.run_url }}
+        run: |
+          {
+            echo "## git-slop tap handoff"
+            echo
+            echo "- Branch: \`${BRANCH}\`"
+            echo "- Head: \`${HEAD_SHA}\`"
+            echo "- Changed: \`${CHANGED}\`"
+            echo "- Reused existing exact head: \`${REUSED}\`"
+            echo "- Already published on main: \`${PUBLISHED}\`"
+            if [[ -n "$PULL_REQUEST" ]]; then
+              echo "- Pull request: #${PULL_REQUEST}"
+              echo "- Reused exact-head test run: \`${TEST_REUSED}\`"
+              echo "- Exact-head test state: \`${TEST_STATE}\`"
+              if [[ -n "$TEST_RUN_URL" ]]; then
+                echo "- Exact-head test run: ${TEST_RUN_URL}"
+              fi
+              echo "- Next gate: wait for the newest exact-head test run to succeed, then have a human apply \`pr-pull\`."
+            elif [[ "$PUBLISHED" == "true" ]]; then
+              echo "- Result: this exact release is already on main; the formula and its bottle block were preserved."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

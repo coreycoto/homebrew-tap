@@ -1,13 +1,25 @@
 name: brew pr-pull
 
+run-name: "Publish bottles for PR #${{ github.event.pull_request.number }}"
+
 on:
   pull_request_target:
     types:
       - labeled
 
+permissions: {}
+
+concurrency:
+  group: git-slop-formula-publication
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+
 jobs:
   pr-pull:
-    if: contains(github.event.pull_request.labels.*.name, 'pr-pull')
+    if: github.event.label.name == 'pr-pull'
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -16,27 +28,253 @@ jobs:
       issues: read
       pull-requests: write
     steps:
+      - name: Check out trusted tap main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Resolve and verify the labeled pull request
+        id: pull-request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_PULL_REQUEST: ${{ github.event.pull_request.number }}
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          pull_request="$EVENT_PULL_REQUEST"
+          head_sha="$EVENT_HEAD_SHA"
+          [[ "$pull_request" =~ ^[1-9][0-9]*$ ]]
+          [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]]
+
+          pr_json="$(
+            gh api "repos/${GITHUB_REPOSITORY}/pulls/${pull_request}"
+          )"
+          test "$(jq -r .state <<<"$pr_json")" = "open"
+          test "$(jq -r .base.ref <<<"$pr_json")" = "main"
+          test "$(jq -r .head.repo.full_name <<<"$pr_json")" = "$GITHUB_REPOSITORY"
+          test "$(jq -r .head.sha <<<"$pr_json")" = "$head_sha"
+          branch="$(jq -r .head.ref <<<"$pr_json")"
+          [[ "$branch" == automation/git-slop-v* ]]
+          jq -e '.labels | any(.name == "pr-pull")' <<<"$pr_json" >/dev/null
+
+          files_path="$RUNNER_TEMP/pull-request-files.jsonl"
+          gh api --paginate \
+            "repos/${GITHUB_REPOSITORY}/pulls/${pull_request}/files" \
+            > "$files_path"
+          jq -se '
+            flatten |
+            length == 2 and
+            all(
+              (.status == "added" or .status == "modified") and
+              (has("previous_filename") | not)
+            )
+          ' "$files_path" >/dev/null
+          changed_files="$(
+            jq -sr 'flatten | .[].filename' "$files_path" |
+              LC_ALL=C sort
+          )"
+          expected_files=$'Formula/git-slop.rb\nmetadata/git-slop-release.json'
+          test "$changed_files" = "$expected_files"
+
+          {
+            echo "number=$pull_request"
+            echo "head_sha=$head_sha"
+            echo "branch=$branch"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Load immutable release metadata from the formula head
+        id: metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ steps.pull-request.outputs.head_sha }}
+        run: |
+          gh api \
+            "repos/${GITHUB_REPOSITORY}/contents/metadata/git-slop-release.json?ref=${HEAD_SHA}" \
+            --jq .content |
+            tr -d '\n' |
+            base64 --decode > "$RUNNER_TEMP/git-slop-release.json"
+          gh api \
+            "repos/${GITHUB_REPOSITORY}/contents/Formula/git-slop.rb?ref=${HEAD_SHA}" \
+            --jq .content |
+            tr -d '\n' |
+            base64 --decode > "$RUNNER_TEMP/git-slop-pr.rb"
+
+          jq -e '
+            .schema_version == 1 and
+            .project == "git-slop" and
+            (.version | type == "string") and
+            (.revision | type == "string") and
+            (.formula.url | type == "string") and
+            (.formula.sha256 | type == "string") and
+            (.release_manifest.url | type == "string") and
+            (.release_manifest.sha256 | type == "string") and
+            (.crate_source.url | type == "string") and
+            (.crate_source.sha256 | type == "string")
+          ' "$RUNNER_TEMP/git-slop-release.json" >/dev/null
+
+          version="$(jq -r .version "$RUNNER_TEMP/git-slop-release.json")"
+          revision="$(jq -r .revision "$RUNNER_TEMP/git-slop-release.json")"
+          formula_url="$(jq -r .formula.url "$RUNNER_TEMP/git-slop-release.json")"
+          formula_sha256="$(jq -r .formula.sha256 "$RUNNER_TEMP/git-slop-release.json")"
+          manifest_url="$(jq -r .release_manifest.url "$RUNNER_TEMP/git-slop-release.json")"
+          manifest_sha256="$(jq -r .release_manifest.sha256 "$RUNNER_TEMP/git-slop-release.json")"
+          crate_url="$(jq -r .crate_source.url "$RUNNER_TEMP/git-slop-release.json")"
+          crate_sha256="$(jq -r .crate_source.sha256 "$RUNNER_TEMP/git-slop-release.json")"
+
+          [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          [[ "$revision" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$formula_sha256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$manifest_sha256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$crate_sha256" =~ ^[0-9a-f]{64}$ ]]
+          release_base="https://github.com/coreycoto/git-slop/releases/download/v${version}"
+          test "$formula_url" = "${release_base}/git-slop.rb"
+          test "$manifest_url" = "${release_base}/release-manifest.json"
+          test "$crate_url" = "https://static.crates.io/crates/git-slop/git-slop-${version}.crate"
+
+          {
+            echo "version=$version"
+            echo "revision=$revision"
+            echo "formula_url=$formula_url"
+            echo "formula_sha256=$formula_sha256"
+            echo "manifest_url=$manifest_url"
+            echo "manifest_sha256=$manifest_sha256"
+            echo "crate_url=$crate_url"
+            echo "crate_sha256=$crate_sha256"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Reverify release identity and exact formula
+        env:
+          RELEASE_VERSION: ${{ steps.metadata.outputs.version }}
+          RELEASE_REVISION: ${{ steps.metadata.outputs.revision }}
+          FORMULA_URL: ${{ steps.metadata.outputs.formula_url }}
+          FORMULA_SHA256: ${{ steps.metadata.outputs.formula_sha256 }}
+          MANIFEST_URL: ${{ steps.metadata.outputs.manifest_url }}
+          MANIFEST_SHA256: ${{ steps.metadata.outputs.manifest_sha256 }}
+          CRATE_URL: ${{ steps.metadata.outputs.crate_url }}
+          CRATE_SHA256: ${{ steps.metadata.outputs.crate_sha256 }}
+        run: |
+          scripts/verify-git-slop-release.sh "$RUNNER_TEMP/git-slop-verified"
+          cmp \
+            "$RUNNER_TEMP/git-slop-verified/git-slop.rb" \
+            "$RUNNER_TEMP/git-slop-pr.rb"
+
       - name: Set up Homebrew
-        uses: Homebrew/actions/setup-homebrew@main
+        uses: Homebrew/actions/setup-homebrew@df4b09108a1de9d6f995fe68f302b3f68bd6d2ef # 2026.07.20.1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up git
-        uses: Homebrew/actions/git-user-config@main
+        id: git_setup
+        uses: Homebrew/actions/git-user-config@df4b09108a1de9d6f995fe68f302b3f68bd6d2ef # 2026.07.20.1
 
-      - name: Pull bottles
+      - name: Require the newest exact-head test run to be green
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.pull-request.outputs.branch }}
+          HEAD_SHA: ${{ steps.pull-request.outputs.head_sha }}
+        run: |
+          runs_json="$RUNNER_TEMP/git-slop-test-runs.json"
+          gh api --method GET \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/tests.yml/runs" \
+            -f event=workflow_dispatch \
+            -f head_sha="$HEAD_SHA" \
+            -f per_page=100 \
+            > "$runs_json"
+          run_json="$(
+            jq -c \
+              --arg head_sha "$HEAD_SHA" \
+              --arg branch "$BRANCH" '
+                [
+                  .workflow_runs[] |
+                  select(
+                    .event == "workflow_dispatch" and
+                    .head_sha == $head_sha and
+                    .head_branch == $branch
+                  )
+                ] |
+                sort_by(.run_number) |
+                reverse |
+                .[0] // empty
+              ' "$runs_json"
+          )"
+          if [[ -z "$run_json" ]]; then
+            echo "No tests.yml workflow_dispatch run exists for exact head ${HEAD_SHA}." >&2
+            exit 1
+          fi
+
+          run_id="$(jq -r .id <<<"$run_json")"
+          run_url="$(jq -r .html_url <<<"$run_json")"
+          jq -e \
+            --arg head_sha "$HEAD_SHA" \
+            --arg branch "$BRANCH" '
+              .event == "workflow_dispatch" and
+              .head_sha == $head_sha and
+              .head_branch == $branch and
+              .status == "completed" and
+              .conclusion == "success"
+            ' <<<"$run_json" >/dev/null || {
+              echo "Newest exact-head tests.yml run is not completed successfully: ${run_url}" >&2
+              exit 1
+            }
+
+          artifacts_json="$RUNNER_TEMP/git-slop-test-artifacts.json"
+          gh api --method GET \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/artifacts" \
+            -f per_page=100 \
+            > "$artifacts_json"
+          jq -e '
+            .total_count == 2 and
+            ([.artifacts[] | select(.expired == false) | .name] | sort) ==
+              ["bottles_macos-26", "bottles_ubuntu-latest"]
+          ' "$artifacts_json" >/dev/null || {
+            echo "Newest successful exact-head run does not have both unexpired bottle artifacts: ${run_url}" >&2
+            exit 1
+          }
+
+          echo "Using successful exact-head bottle run ${run_url}."
+
+      - name: Pull exact-head bottles
+        # tests.yml workflow_dispatch runs share this workflow's concurrency
+        # group. Homebrew may therefore re-resolve the newest check suite here
+        # without a later completed run superseding the successful run above.
         env:
           HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PULL_REQUEST: ${{ github.event.pull_request.number }}
-        run: brew pr-pull --debug --tap="$GITHUB_REPOSITORY" "$PULL_REQUEST"
+          HOMEBREW_GIT_COMMITTER_NAME: ${{ steps.git_setup.outputs.name }}
+          HOMEBREW_GIT_COMMITTER_EMAIL: ${{ steps.git_setup.outputs.email }}
+          HEAD_SHA: ${{ steps.pull-request.outputs.head_sha }}
+          PULL_REQUEST: ${{ steps.pull-request.outputs.number }}
+        run: |
+          brew pr-pull \
+            --debug \
+            --tap="$GITHUB_REPOSITORY" \
+            --head-sha="$HEAD_SHA" \
+            --workflows=tests.yml \
+            "$PULL_REQUEST"
 
-      - name: Push commits
-        uses: Homebrew/actions/git-try-push@main
+      - name: Push bottle and formula commits
+        uses: Homebrew/actions/git-try-push@df4b09108a1de9d6f995fe68f302b3f68bd6d2ef # 2026.07.20.1
         with:
           branch: main
 
-      - name: Delete branch
-        if: github.event.pull_request.head.repo.fork == false
+      - name: Delete the automation branch
         env:
-          BRANCH: ${{ github.event.pull_request.head.ref }}
-        run: git push --delete origin "$BRANCH"
+          BRANCH: ${{ steps.pull-request.outputs.branch }}
+          HEAD_SHA: ${{ steps.pull-request.outputs.head_sha }}
+        run: |
+          remote_sha="$(
+            git ls-remote origin "refs/heads/${BRANCH}" |
+              awk 'NR == 1 { print $1 }'
+          )"
+          if [[ -z "$remote_sha" ]]; then
+            exit 0
+          fi
+          if [[ "$remote_sha" != "$HEAD_SHA" ]]; then
+            echo "::warning::Automation branch advanced; preserving newer head ${remote_sha}."
+            exit 0
+          fi
+          if ! git push \
+            --force-with-lease="refs/heads/${BRANCH}:${HEAD_SHA}" \
+            origin ":refs/heads/${BRANCH}"
+          then
+            echo "::warning::Exact-head automation branch cleanup was skipped."
+          fi

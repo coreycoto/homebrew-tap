@@ -1,52 +1,267 @@
 name: brew test-bot
 
+run-name: >-
+  brew test-bot for
+  ${{ inputs.trusted_head_sha || github.event.pull_request.head.sha || github.sha }}
+
 on:
   push:
     branches:
       - main
   pull_request:
+  workflow_dispatch:
+    inputs:
+      trusted_head_sha:
+        description: Exact automation-branch head commit to test
+        required: true
+        type: string
+      version:
+        description: Verified git-slop release version
+        required: true
+        type: string
+      revision:
+        description: Verified git-slop source revision
+        required: true
+        type: string
+      formula_url:
+        description: Canonical GitHub Release formula URL
+        required: true
+        type: string
+      formula_sha256:
+        description: Verified formula SHA-256
+        required: true
+        type: string
+      manifest_url:
+        description: Canonical GitHub Release manifest URL
+        required: true
+        type: string
+      manifest_sha256:
+        description: Verified manifest SHA-256
+        required: true
+        type: string
+      crate_url:
+        description: Canonical crates.io package URL
+        required: true
+        type: string
+      crate_sha256:
+        description: Verified crate SHA-256
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  # Homebrew's pr-pull resolves the newest tests.yml check suite again instead
+  # of accepting a previously gated run ID. Serialize release dispatches with
+  # the receiver and publisher so a later failed run cannot replace the
+  # successful artifact set between the publication gate and pr-pull. Ordinary
+  # pull-request and push tests remain independently serialized per ref.
+  group: >-
+    ${{ github.event_name == 'workflow_dispatch'
+        && 'git-slop-formula-publication'
+        || format('test-bot-{0}', github.event.pull_request.head.sha || github.ref) }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
 
 jobs:
   test-bot:
+    name: Test and bottle (${{ matrix.name }})
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - os: macos-26
-          - os: ubuntu-latest
-            container: ghcr.io/homebrew/brew:main
+          - name: macOS Apple Silicon
+            os: macos-26
+          - name: Linux x86-64
+            os: ubuntu-latest
+            container:
+              image: >-
+                ghcr.io/homebrew/brew@sha256:9df6f3bf046e72dbe5c89cf665afbb4c5a09112ed0152c75ca51dbf5def13aba
+              options: --privileged
     runs-on: ${{ matrix.os }}
-    container: ${{ matrix.container }}
+    container: ${{ fromJSON(toJSON(matrix.container)) }} # zizmor: ignore[unpinned-images]
     permissions:
       actions: read
       checks: read
       contents: read
       pull-requests: read
+    env:
+      TRUSTED_HEAD_SHA: ${{ inputs.trusted_head_sha || github.event.pull_request.head.sha || github.sha }}
+      RELEASE_VERSION: ${{ inputs.version }}
+      RELEASE_REVISION: ${{ inputs.revision }}
+      FORMULA_URL: ${{ inputs.formula_url }}
+      FORMULA_SHA256: ${{ inputs.formula_sha256 }}
+      MANIFEST_URL: ${{ inputs.manifest_url }}
+      MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}
+      CRATE_URL: ${{ inputs.crate_url }}
+      CRATE_SHA256: ${{ inputs.crate_sha256 }}
     steps:
+      - name: Check out the exact formula head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ env.TRUSTED_HEAD_SHA }}
+
+      - name: Test the fail-closed release verifier
+        run: scripts/verify-git-slop-release.test.sh
+
+      - name: Verify trusted workflow-dispatch inputs
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          test "$(git rev-parse HEAD)" = "$TRUSTED_HEAD_SHA"
+          test "$GITHUB_SHA" = "$TRUSTED_HEAD_SHA"
+          changed_files="$(
+            git diff --name-only --no-renames origin/main...HEAD |
+              LC_ALL=C sort
+          )"
+          expected_files=$'Formula/git-slop.rb\nmetadata/git-slop-release.json'
+          test "$changed_files" = "$expected_files"
+
+          jq -e \
+            --arg version "$RELEASE_VERSION" \
+            --arg revision "$RELEASE_REVISION" \
+            --arg formula_url "$FORMULA_URL" \
+            --arg formula_sha256 "$FORMULA_SHA256" \
+            --arg manifest_url "$MANIFEST_URL" \
+            --arg manifest_sha256 "$MANIFEST_SHA256" \
+            --arg crate_url "$CRATE_URL" \
+            --arg crate_sha256 "$CRATE_SHA256" '
+              .schema_version == 1 and
+              .project == "git-slop" and
+              .version == $version and
+              .revision == $revision and
+              .formula == {url: $formula_url, sha256: $formula_sha256} and
+              .release_manifest == {url: $manifest_url, sha256: $manifest_sha256} and
+              .crate_source == {url: $crate_url, sha256: $crate_sha256}
+            ' metadata/git-slop-release.json >/dev/null
+
+          scripts/verify-git-slop-release.sh "$RUNNER_TEMP/git-slop-release"
+          cmp \
+            "$RUNNER_TEMP/git-slop-release/git-slop.rb" \
+            Formula/git-slop.rb
+
       - name: Set up Homebrew
         id: set-up-homebrew
-        uses: Homebrew/actions/setup-homebrew@main
+        uses: Homebrew/actions/setup-homebrew@df4b09108a1de9d6f995fe68f302b3f68bd6d2ef # 2026.07.20.1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Cache Homebrew Bundler RubyGems
-        uses: actions/cache@v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ steps.set-up-homebrew.outputs.gems-path }}
           key: ${{ matrix.os }}-rubygems-${{ steps.set-up-homebrew.outputs.gems-hash }}
           restore-keys: ${{ matrix.os }}-rubygems-
 
-      - run: brew test-bot --only-cleanup-before
+      - name: Clean up before test-bot
+        run: brew test-bot --only-cleanup-before
 
-      - run: brew test-bot --only-setup
+      - name: Set up test-bot
+        run: brew test-bot --only-setup
 
-      - run: brew test-bot --only-tap-syntax
+      - name: Audit tap syntax
+        run: brew test-bot --only-tap-syntax
 
-      - run: brew test-bot --only-formulae
-        if: github.event_name == 'pull_request'
+      - name: Build, bottle, install, and test changed formulae
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            brew test-bot --only-formulae --testing-formulae=git-slop
+          else
+            brew test-bot --only-formulae
+          fi
+
+      - name: Require a bottle artifact
+        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        run: compgen -G '*.bottle.*' >/dev/null
+
+      - name: Verify source install and embedded provenance
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          brew uninstall --force git-slop || true
+          brew install --build-from-source coreycoto/tap/git-slop
+          test "$(git-slop version)" = "git-slop ${RELEASE_VERSION}"
+          git-slop build-info --format json > "$RUNNER_TEMP/build-info.json"
+          jq -e \
+            --arg version "$RELEASE_VERSION" \
+            --arg revision "$RELEASE_REVISION" '
+              .version == $version and
+              .source_revision == $revision and
+              .source_dirty == false
+            ' "$RUNNER_TEMP/build-info.json" >/dev/null
+          brew test coreycoto/tap/git-slop
+          git slop --help >/dev/null
+          if brew deps --installed coreycoto/tap/git-slop |
+            grep -E '^(libyaml|python(@.*)?)$'
+          then
+            echo "Native git-slop formula retained a Python runtime dependency." >&2
+            exit 1
+          fi
 
       - name: Upload bottles as artifact
-        if: always() && github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v7
+        if: always() && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch')
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: bottles_${{ matrix.os }}
           path: '*.bottle.*'
+          if-no-files-found: error
+          retention-days: 1
+
+  upgrade:
+    name: Upgrade the prior tap formula
+    if: github.event_name == 'workflow_dispatch'
+    needs: test-bot
+    runs-on: macos-26
+    permissions:
+      contents: read
+    env:
+      TRUSTED_HEAD_SHA: ${{ inputs.trusted_head_sha }}
+      RELEASE_VERSION: ${{ inputs.version }}
+      RELEASE_REVISION: ${{ inputs.revision }}
+    steps:
+      - name: Check out the exact formula head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.trusted_head_sha }}
+
+      - name: Set up Homebrew
+        uses: Homebrew/actions/setup-homebrew@df4b09108a1de9d6f995fe68f302b3f68bd6d2ef # 2026.07.20.1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install the prior formula, then upgrade from source
+        run: |
+          test "$(git rev-parse HEAD)" = "$TRUSTED_HEAD_SHA"
+          test "$GITHUB_SHA" = "$TRUSTED_HEAD_SHA"
+          cp Formula/git-slop.rb "$RUNNER_TEMP/git-slop-new.rb"
+          git show origin/main:Formula/git-slop.rb > Formula/git-slop.rb
+          brew install coreycoto/tap/git-slop
+          prior_version="$(git-slop version)"
+          test "$prior_version" != "git-slop ${RELEASE_VERSION}"
+
+          cp "$RUNNER_TEMP/git-slop-new.rb" Formula/git-slop.rb
+          brew outdated --verbose coreycoto/tap/git-slop || true
+          brew upgrade --build-from-source coreycoto/tap/git-slop
+          test "$(git-slop version)" = "git-slop ${RELEASE_VERSION}"
+          git-slop build-info --format json > "$RUNNER_TEMP/build-info.json"
+          jq -e \
+            --arg version "$RELEASE_VERSION" \
+            --arg revision "$RELEASE_REVISION" '
+              .version == $version and
+              .source_revision == $revision and
+              .source_dirty == false
+            ' "$RUNNER_TEMP/build-info.json" >/dev/null
+          brew test coreycoto/tap/git-slop
+          git slop --help >/dev/null
+          if brew deps --installed coreycoto/tap/git-slop |
+            grep -E '^(libyaml|python(@.*)?)$'
+          then
+            echo "Upgraded git-slop retained a Python runtime dependency." >&2
+            exit 1
+          fi

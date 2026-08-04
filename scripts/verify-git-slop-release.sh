@@ -4,7 +4,7 @@ set -euo pipefail
 
 curl_bin="${CURL_BIN:-curl}"
 git_bin="${GIT_BIN:-git}"
-ruby_bin="${RUBY_BIN:-ruby}"
+ruby_bin_override="${RUBY_BIN:-}"
 
 RELEASE_VERSION="${RELEASE_VERSION:-}"
 RELEASE_REVISION="${RELEASE_REVISION:-}"
@@ -19,6 +19,20 @@ die() {
   printf 'error: %s\n' "$*" >&2
   exit 1
 }
+
+ruby_command=()
+if [[ -n "${ruby_bin_override}" ]]
+then
+  ruby_command=("${ruby_bin_override}")
+elif command -v ruby >/dev/null 2>&1
+then
+  ruby_command=(ruby)
+elif command -v brew >/dev/null 2>&1
+then
+  ruby_command=(brew ruby --)
+else
+  die "Ruby or Homebrew's portable Ruby is required"
+fi
 
 require_env() {
   local name="$1"
@@ -215,7 +229,7 @@ EOF
 
 cmp "${expected_formula_path}" "${formula_path}" ||
   die "formula asset does not exactly match the trusted crates-first template"
-"${ruby_bin}" -c "${formula_path}" >/dev/null ||
+"${ruby_command[@]}" -c "${formula_path}" >/dev/null ||
   die "formula asset is not valid Ruby syntax"
 
 printf 'Verified git-slop %s at %s.\n' "${RELEASE_VERSION}" "${RELEASE_REVISION}"

@@ -6,6 +6,15 @@ curl_bin="${CURL_BIN:-curl}"
 git_bin="${GIT_BIN:-git}"
 ruby_bin="${RUBY_BIN:-ruby}"
 
+RELEASE_VERSION="${RELEASE_VERSION:-}"
+RELEASE_REVISION="${RELEASE_REVISION:-}"
+FORMULA_URL="${FORMULA_URL:-}"
+FORMULA_SHA256="${FORMULA_SHA256:-}"
+MANIFEST_URL="${MANIFEST_URL:-}"
+MANIFEST_SHA256="${MANIFEST_SHA256:-}"
+CRATE_URL="${CRATE_URL:-}"
+CRATE_SHA256="${CRATE_SHA256:-}"
+
 die() {
   printf 'error: %s\n' "$*" >&2
   exit 1
@@ -18,21 +27,22 @@ require_env() {
 
 sha256_file() {
   local path="$1"
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$path" | awk '{print $1}'
+  if command -v sha256sum >/dev/null 2>&1
+  then
+    sha256sum "${path}" | awk '{print $1}'
   else
-    shasum -a 256 "$path" | awk '{print $1}'
+    shasum -a 256 "${path}" | awk '{print $1}'
   fi
 }
 
 download() {
   local url="$1"
   local output="$2"
-  "$curl_bin" --fail --silent --show-error --location \
+  "${curl_bin}" --fail --silent --show-error --location \
     --proto '=https' \
     --tlsv1.2 \
-    "$url" \
-    --output "$output"
+    "${url}" \
+    --output "${output}"
 }
 
 verify_checksum_entry() {
@@ -41,45 +51,46 @@ verify_checksum_entry() {
   local expected_name="$3"
   local result
   result="$(
-    awk -v digest="$expected_digest" -v name="$expected_name" '
+    awk -v digest="${expected_digest}" -v name="${expected_name}" '
       $2 == name {
         names += 1
-        if ($1 == digest) {
-          matches += 1
-        }
+        matches += ($1 == digest)
       }
       END { printf "%d:%d", names, matches }
-    ' "$checksums_path"
+    ' "${checksums_path}"
   )"
-  [[ "$result" == "1:1" ]] ||
+  [[ "${result}" == "1:1" ]] ||
     die "SHA256SUMS must contain one exact ${expected_name} entry with digest ${expected_digest}"
 }
 
-for name in \
-  RELEASE_VERSION \
-  RELEASE_REVISION \
-  FORMULA_URL \
-  FORMULA_SHA256 \
-  MANIFEST_URL \
-  MANIFEST_SHA256 \
-  CRATE_URL \
+required_env_names=(
+  RELEASE_VERSION
+  RELEASE_REVISION
+  FORMULA_URL
+  FORMULA_SHA256
+  MANIFEST_URL
+  MANIFEST_SHA256
+  CRATE_URL
   CRATE_SHA256
+)
+for name in "${required_env_names[@]}"
 do
-  require_env "$name"
+  require_env "${name}"
 done
 
 [[ $# -eq 1 ]] || die "usage: verify-git-slop-release.sh OUTPUT_DIRECTORY"
 output_dir="$1"
-mkdir -p "$output_dir"
+mkdir -p "${output_dir}"
 
-[[ "$RELEASE_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] ||
+[[ "${RELEASE_VERSION}" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] ||
   die "release version must be strict X.Y.Z semver"
-[[ "$RELEASE_REVISION" =~ ^[0-9a-f]{40}$ ]] ||
+[[ "${RELEASE_REVISION}" =~ ^[0-9a-f]{40}$ ]] ||
   die "release revision must be a lowercase 40-character commit SHA"
 
-for digest_name in FORMULA_SHA256 MANIFEST_SHA256 CRATE_SHA256; do
+for digest_name in FORMULA_SHA256 MANIFEST_SHA256 CRATE_SHA256
+do
   digest="${!digest_name}"
-  [[ "$digest" =~ ^[0-9a-f]{64}$ ]] ||
+  [[ "${digest}" =~ ^[0-9a-f]{64}$ ]] ||
     die "${digest_name} must be a lowercase SHA-256 digest"
 done
 
@@ -90,11 +101,11 @@ expected_manifest_url="${release_base}/release-manifest.json"
 expected_crate_url="https://static.crates.io/crates/git-slop/git-slop-${RELEASE_VERSION}.crate"
 checksum_url="${release_base}/SHA256SUMS"
 
-[[ "$FORMULA_URL" == "$expected_formula_url" ]] ||
+[[ "${FORMULA_URL}" == "${expected_formula_url}" ]] ||
   die "formula URL must be ${expected_formula_url}"
-[[ "$MANIFEST_URL" == "$expected_manifest_url" ]] ||
+[[ "${MANIFEST_URL}" == "${expected_manifest_url}" ]] ||
   die "manifest URL must be ${expected_manifest_url}"
-[[ "$CRATE_URL" == "$expected_crate_url" ]] ||
+[[ "${CRATE_URL}" == "${expected_crate_url}" ]] ||
   die "crate URL must be ${expected_crate_url}"
 
 formula_path="${output_dir}/git-slop.rb"
@@ -103,30 +114,34 @@ checksums_path="${output_dir}/SHA256SUMS"
 crate_path="${output_dir}/git-slop-${RELEASE_VERSION}.crate"
 expected_formula_path="${output_dir}/expected-git-slop.rb"
 
-download "$FORMULA_URL" "$formula_path"
-download "$MANIFEST_URL" "$manifest_path"
-download "$checksum_url" "$checksums_path"
-download "$CRATE_URL" "$crate_path"
+download "${FORMULA_URL}" "${formula_path}"
+download "${MANIFEST_URL}" "${manifest_path}"
+download "${checksum_url}" "${checksums_path}"
+download "${CRATE_URL}" "${crate_path}"
 
-[[ "$(sha256_file "$formula_path")" == "$FORMULA_SHA256" ]] ||
+downloaded_formula_sha256="$(sha256_file "${formula_path}")"
+downloaded_manifest_sha256="$(sha256_file "${manifest_path}")"
+downloaded_crate_sha256="$(sha256_file "${crate_path}")"
+
+[[ "${downloaded_formula_sha256}" == "${FORMULA_SHA256}" ]] ||
   die "downloaded formula digest does not match FORMULA_SHA256"
-[[ "$(sha256_file "$manifest_path")" == "$MANIFEST_SHA256" ]] ||
+[[ "${downloaded_manifest_sha256}" == "${MANIFEST_SHA256}" ]] ||
   die "downloaded manifest digest does not match MANIFEST_SHA256"
-[[ "$(sha256_file "$crate_path")" == "$CRATE_SHA256" ]] ||
+[[ "${downloaded_crate_sha256}" == "${CRATE_SHA256}" ]] ||
   die "downloaded crate digest does not match CRATE_SHA256"
 
-verify_checksum_entry "$checksums_path" "$FORMULA_SHA256" git-slop.rb
+verify_checksum_entry "${checksums_path}" "${FORMULA_SHA256}" git-slop.rb
 verify_checksum_entry \
-  "$checksums_path" \
-  "$MANIFEST_SHA256" \
+  "${checksums_path}" \
+  "${MANIFEST_SHA256}" \
   release-manifest.json
 
 jq -e \
-  --arg version "$RELEASE_VERSION" \
-  --arg tag "$release_tag" \
-  --arg revision "$RELEASE_REVISION" \
-  --arg crate_url "$CRATE_URL" \
-  --arg crate_sha256 "$CRATE_SHA256" '
+  --arg version "${RELEASE_VERSION}" \
+  --arg tag "${release_tag}" \
+  --arg revision "${RELEASE_REVISION}" \
+  --arg crate_url "${CRATE_URL}" \
+  --arg crate_sha256 "${CRATE_SHA256}" '
     .schema_version == 3 and
     .project == "git-slop" and
     .repository == "coreycoto/git-slop" and
@@ -140,39 +155,40 @@ jq -e \
     .crate_source.sha256 == $crate_sha256 and
     .crate_source.revision == $revision and
     .crate_source.vcs_dirty == false
-  ' "$manifest_path" >/dev/null ||
+  ' "${manifest_path}" >/dev/null ||
   die "release manifest identity or crate_source does not match dispatch inputs"
 
 tag_lines="$(
-  "$git_bin" ls-remote \
+  "${git_bin}" ls-remote \
     https://github.com/coreycoto/git-slop.git \
     "refs/tags/${release_tag}" \
     "refs/tags/${release_tag}^{}"
 )"
 tag_revision="$(
-  awk -v peeled="refs/tags/${release_tag}^{}" '$2 == peeled { print $1 }' <<<"$tag_lines"
+  awk -v peeled="refs/tags/${release_tag}^{}" '$2 == peeled { print $1 }' <<<"${tag_lines}"
 )"
-if [[ -z "$tag_revision" ]]; then
+if [[ -z "${tag_revision}" ]]
+then
   tag_revision="$(
-    awk -v direct="refs/tags/${release_tag}" '$2 == direct { print $1 }' <<<"$tag_lines"
+    awk -v direct="refs/tags/${release_tag}" '$2 == direct { print $1 }' <<<"${tag_lines}"
   )"
 fi
-[[ "$tag_revision" == "$RELEASE_REVISION" ]] ||
+[[ "${tag_revision}" == "${RELEASE_REVISION}" ]] ||
   die "public ${release_tag} resolves to ${tag_revision:-missing}, not ${RELEASE_REVISION}"
 
 crate_root="git-slop-${RELEASE_VERSION}"
 vcs_info_member="${crate_root}/.cargo_vcs_info.json"
-tar -tzf "$crate_path" | grep -Fx "$vcs_info_member" >/dev/null ||
+tar -tzf "${crate_path}" | grep -Fx "${vcs_info_member}" >/dev/null ||
   die "crate is missing ${vcs_info_member}"
-tar -xOzf "$crate_path" "$vcs_info_member" |
-  jq -e --arg revision "$RELEASE_REVISION" '
+tar -xOzf "${crate_path}" "${vcs_info_member}" |
+  jq -e --arg revision "${RELEASE_REVISION}" '
     .git.sha1 == $revision and
     ((.git | has("dirty") | not) or .git.dirty == false) and
     .path_in_vcs == ""
   ' >/dev/null ||
   die "crate VCS metadata does not match release revision"
 
-cat >"$expected_formula_path" <<EOF
+cat >"${expected_formula_path}" <<EOF
 class GitSlop < Formula
   desc "Deterministic repository health analysis for humans and AI agents"
   homepage "https://github.com/coreycoto/git-slop"
@@ -197,9 +213,9 @@ class GitSlop < Formula
 end
 EOF
 
-cmp "$expected_formula_path" "$formula_path" ||
+cmp "${expected_formula_path}" "${formula_path}" ||
   die "formula asset does not exactly match the trusted crates-first template"
-"$ruby_bin" -c "$formula_path" >/dev/null ||
+"${ruby_bin}" -c "${formula_path}" >/dev/null ||
   die "formula asset is not valid Ruby syntax"
 
-printf 'Verified git-slop %s at %s.\n' "$RELEASE_VERSION" "$RELEASE_REVISION"
+printf 'Verified git-slop %s at %s.\n' "${RELEASE_VERSION}" "${RELEASE_REVISION}"

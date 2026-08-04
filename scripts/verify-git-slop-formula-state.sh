@@ -13,10 +13,10 @@ die() {
 expected_formula="$1"
 actual_formula="$2"
 
-[[ -f "$expected_formula" ]] || die "expected formula is missing"
-[[ -f "$actual_formula" ]] || die "actual formula is missing"
+[[ -f "${expected_formula}" ]] || die "expected formula is missing"
+[[ -f "${actual_formula}" ]] || die "actual formula is missing"
 
-ruby - "$expected_formula" "$actual_formula" <<'RUBY'
+ruby - "${expected_formula}" "${actual_formula}" <<'RUBY'
 expected_path, actual_path = ARGV
 expected = File.binread(expected_path)
 actual_lines = File.binread(actual_path).lines

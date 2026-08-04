@@ -112,6 +112,11 @@ jobs:
           persist-credentials: false
           ref: ${{ env.TRUSTED_HEAD_SHA }}
 
+      - name: Trust the exact checked-out workspace
+        run: |
+          git config --global --add safe.directory "${GITHUB_WORKSPACE}"
+          test "$(git rev-parse HEAD)" = "${TRUSTED_HEAD_SHA}"
+
       - name: Detect formula changes
         id: formula_change
         run: |

@@ -112,6 +112,15 @@ jobs:
           persist-credentials: false
           ref: ${{ env.TRUSTED_HEAD_SHA }}
 
+      - name: Detect formula changes
+        id: formula_change
+        run: |
+          if git diff --quiet origin/main...HEAD -- Formula/; then
+            echo 'changed=false' >> "${GITHUB_OUTPUT}"
+          else
+            echo 'changed=true' >> "${GITHUB_OUTPUT}"
+          fi
+
       - name: Test the fail-closed release verifier
         run: scripts/verify-git-slop-release.test.sh
 
@@ -176,7 +185,9 @@ jobs:
           fi
 
       - name: Require a bottle artifact
-        if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+        if: >-
+          github.event_name == 'workflow_dispatch' ||
+          steps.formula_change.outputs.changed == 'true'
         run: compgen -G '*.bottle.*' >/dev/null
 
       - name: Verify source install and embedded provenance
@@ -203,7 +214,10 @@ jobs:
           fi
 
       - name: Upload bottles as artifact
-        if: always() && (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch')
+        if: >-
+          always() &&
+          (github.event_name == 'workflow_dispatch' ||
+           steps.formula_change.outputs.changed == 'true')
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: bottles_${{ matrix.os }}

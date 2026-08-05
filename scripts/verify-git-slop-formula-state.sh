@@ -61,7 +61,7 @@ bottle_lines.each do |line|
   when /\A    rebuild [1-9][0-9]*\n\z/
     abort "error: rebuild is out of order or duplicated" unless %i[start root_url].include?(state)
     state = :rebuild
-  when /\A    sha256 cellar: (?:\:[a-z0-9_]+|"[A-Za-z0-9._+\/-]+"), ([a-z0-9_]+): "[0-9a-f]{64}"\n\z/
+  when /\A    sha256 cellar: (?:\:[a-z0-9_]+|"[A-Za-z0-9._+\/-]+"),[ \t]+([a-z0-9_]+):[ \t]+"[0-9a-f]{64}"\n\z/
     state = :checksums
     checksum_tags << Regexp.last_match(1)
   else

@@ -213,8 +213,8 @@ awk '
   /^  depends_on "rust" => :build$/ && !inserted {
     print "  bottle do"
     print "    root_url \"https://github.com/coreycoto/homebrew-tap/releases/download/git-slop-0.9.0\""
-    print "    sha256 cellar: :any_skip_relocation, arm64_tahoe: \"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\""
-    print "    sha256 cellar: :any_skip_relocation, x86_64_linux: \"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\""
+    print "    sha256 cellar: :any_skip_relocation, arm64_tahoe:  \"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\""
+    print "    sha256 cellar: :any,                 x86_64_linux: \"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\""
     print "  end"
     print ""
     inserted = 1
@@ -232,6 +232,26 @@ if "${repo_root}/scripts/verify-git-slop-formula-state.sh" \
    "${test_root}/git-slop-one-platform.rb"
 then
   echo "single-platform bottle block unexpectedly passed verification" >&2
+  exit 1
+fi
+
+sed 's/x86_64_linux/x86_64_unknown/' \
+  "${formula_with_bottle}" >"${test_root}/git-slop-unknown-platform.rb"
+if "${repo_root}/scripts/verify-git-slop-formula-state.sh" \
+   "${fixture_root}/git-slop.rb" \
+   "${test_root}/git-slop-unknown-platform.rb"
+then
+  echo "unknown bottle platform unexpectedly passed verification" >&2
+  exit 1
+fi
+
+sed 's/abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"/abcdef0123456789abcdef0123456789abcdef0123456789abcdef012345678"/' \
+  "${formula_with_bottle}" >"${test_root}/git-slop-short-digest.rb"
+if "${repo_root}/scripts/verify-git-slop-formula-state.sh" \
+   "${fixture_root}/git-slop.rb" \
+   "${test_root}/git-slop-short-digest.rb"
+then
+  echo "short bottle digest unexpectedly passed verification" >&2
   exit 1
 fi
 

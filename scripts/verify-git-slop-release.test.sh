@@ -190,15 +190,15 @@ fi
 grep -Fx \
   "    assert_match \"\\\"source_revision\\\": \\\"${revision}\\\"\", build_info" \
   "${expected_formula}" >/dev/null || {
-    echo "trusted formula template is missing the canonical source_revision assertion" >&2
-    exit 1
-  }
+  echo "trusted formula template is missing the canonical source_revision assertion" >&2
+  exit 1
+}
 grep -Fx \
   '    assert_match "\"source_dirty\": false", build_info' \
   "${expected_formula}" >/dev/null || {
-    echo "trusted formula template is missing the canonical source_dirty assertion" >&2
-    exit 1
-  }
+  echo "trusted formula template is missing the canonical source_dirty assertion" >&2
+  exit 1
+}
 
 if "${repo_root}/scripts/verify-git-slop-formula-state.sh" \
    "${fixture_root}/git-slop.rb" \

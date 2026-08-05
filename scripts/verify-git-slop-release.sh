@@ -207,7 +207,6 @@ class GitSlop < Formula
   desc "Deterministic repository health analysis for humans and AI agents"
   homepage "https://github.com/coreycoto/git-slop"
   url "${CRATE_URL}"
-  version "${RELEASE_VERSION}"
   sha256 "${CRATE_SHA256}"
   license "MIT"
 
@@ -221,8 +220,8 @@ class GitSlop < Formula
   test do
     assert_match "git-slop ${RELEASE_VERSION}", shell_output("#{bin}/git-slop version")
     build_info = shell_output("#{bin}/git-slop build-info --format json")
-    assert_match %("source_revision": "${RELEASE_REVISION}"), build_info
-    assert_match %("source_dirty": false), build_info
+    assert_match "\"source_revision\": \"${RELEASE_REVISION}\"", build_info
+    assert_match "\"source_dirty\": false", build_info
   end
 end
 EOF

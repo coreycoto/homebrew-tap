@@ -34,7 +34,6 @@ class GitSlop < Formula
   desc "Deterministic repository health analysis for humans and AI agents"
   homepage "https://github.com/coreycoto/git-slop"
   url "${crate_url}"
-  version "${version}"
   sha256 "${crate_sha256}"
   license "MIT"
 
@@ -48,8 +47,8 @@ class GitSlop < Formula
   test do
     assert_match "git-slop ${version}", shell_output("#{bin}/git-slop version")
     build_info = shell_output("#{bin}/git-slop build-info --format json")
-    assert_match %("source_revision": "${revision}"), build_info
-    assert_match %("source_dirty": false), build_info
+    assert_match "\"source_revision\": \"${revision}\"", build_info
+    assert_match "\"source_dirty\": false", build_info
   end
 end
 EOF
@@ -182,6 +181,25 @@ expect_verifier_failure() {
 
 run_verifier "${test_root}/success"
 
+expected_formula="${test_root}/success/expected-git-slop.rb"
+if grep -Eq '^  version ' "${expected_formula}"
+then
+  echo "trusted formula template unexpectedly contains a version stanza" >&2
+  exit 1
+fi
+grep -Fx \
+  "    assert_match \"\\\"source_revision\\\": \\\"${revision}\\\"\", build_info" \
+  "${expected_formula}" >/dev/null || {
+    echo "trusted formula template is missing the canonical source_revision assertion" >&2
+    exit 1
+  }
+grep -Fx \
+  '    assert_match "\"source_dirty\": false", build_info' \
+  "${expected_formula}" >/dev/null || {
+    echo "trusted formula template is missing the canonical source_dirty assertion" >&2
+    exit 1
+  }
+
 if "${repo_root}/scripts/verify-git-slop-formula-state.sh" \
    "${fixture_root}/git-slop.rb" \
    "${fixture_root}/git-slop.rb"
@@ -237,6 +255,38 @@ then
   exit 1
 fi
 
+awk -v version="${version}" '
+  /^  sha256 / && !inserted {
+    printf "  version \"%s\"\n", version
+    inserted = 1
+  }
+  { print }
+' "${fixture_root}/git-slop.rb" >"${test_root}/git-slop-explicit-version.rb"
+mv "${test_root}/git-slop-explicit-version.rb" "${fixture_root}/git-slop.rb"
+write_checksums
+expect_verifier_failure \
+  "${test_root}/explicit-version" \
+  "formula with an explicit version stanza unexpectedly passed verification"
+
+write_formula
+awk -v revision="${revision}" '
+  /source_revision/ {
+    print "    assert_match %(\"source_revision\": \"" revision "\"), build_info"
+    next
+  }
+  /source_dirty/ {
+    print "    assert_match %(\"source_dirty\": false), build_info"
+    next
+  }
+  { print }
+' "${fixture_root}/git-slop.rb" >"${test_root}/git-slop-percent-assertions.rb"
+mv "${test_root}/git-slop-percent-assertions.rb" "${fixture_root}/git-slop.rb"
+write_checksums
+expect_verifier_failure \
+  "${test_root}/percent-assertions" \
+  "formula with percent-literal JSON assertions unexpectedly passed verification"
+
+write_formula
 printf '\n# unexpected formula code\n' >>"${fixture_root}/git-slop.rb"
 write_checksums
 expect_verifier_failure \

@@ -13,22 +13,6 @@ on:
         description: Exact 40-character source commit for the release
         required: true
         type: string
-      formula_url:
-        description: Canonical GitHub Release URL for git-slop.rb
-        required: true
-        type: string
-      formula_sha256:
-        description: SHA-256 of git-slop.rb
-        required: true
-        type: string
-      manifest_url:
-        description: Canonical GitHub Release URL for release-manifest.json
-        required: true
-        type: string
-      manifest_sha256:
-        description: SHA-256 of release-manifest.json
-        required: true
-        type: string
       crate_url:
         description: Canonical static.crates.io crate URL
         required: true
@@ -53,6 +37,7 @@ jobs:
     name: Verify release and open formula PR
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
+    timeout-minutes: 150
     permissions:
       actions: write
       contents: write
@@ -77,14 +62,103 @@ jobs:
           test "$origin_main" = "$live_main"
           test "$(git rev-parse HEAD)" = "$live_main"
 
+      - name: Wait for the exact public release and resolve its assets
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_REVISION: ${{ inputs.revision }}
+          CRATE_URL: ${{ inputs.crate_url }}
+          CRATE_SHA256: ${{ inputs.crate_sha256 }}
+        run: |
+          [[ "$RELEASE_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          [[ "$RELEASE_REVISION" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$CRATE_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          test "$CRATE_URL" = \
+            "https://static.crates.io/crates/git-slop/git-slop-${RELEASE_VERSION}.crate"
+
+          release_tag="v${RELEASE_VERSION}"
+          release_path="$RUNNER_TEMP/git-slop-release.json"
+          for attempt in $(seq 1 240); do
+            if gh api \
+              "repos/coreycoto/git-slop/releases/tags/${release_tag}" \
+              > "$release_path" 2>/dev/null &&
+              jq -e \
+                --arg tag "$release_tag" '
+                  .tag_name == $tag and
+                  .draft == false and
+                  .prerelease == false and
+                  ([.assets[] | select(.name == "git-slop.rb")] | length) == 1 and
+                  ([.assets[] | select(.name == "release-manifest.json")] | length) == 1 and
+                  ([.assets[] | select(.name == "SHA256SUMS")] | length) == 1 and
+                  all(
+                    .assets[] |
+                    select(
+                      .name == "git-slop.rb" or
+                      .name == "release-manifest.json" or
+                      .name == "SHA256SUMS"
+                    );
+                    (.digest | type == "string") and
+                    (.digest | test("^sha256:[0-9a-f]{64}$"))
+                  )
+                ' "$release_path" >/dev/null
+            then
+              break
+            fi
+
+            if [[ "$attempt" == "240" ]]; then
+              echo "Timed out after about two hours waiting for public ${release_tag} with digested release assets." >&2
+              echo "Publish the exact GitHub Release, then redispatch this workflow with the same four immutable inputs." >&2
+              exit 1
+            fi
+            sleep 30
+          done
+
+          release_base="https://github.com/coreycoto/git-slop/releases/download/${release_tag}"
+          formula_url="$(
+            jq -r '.assets[] | select(.name == "git-slop.rb") | .browser_download_url' \
+              "$release_path"
+          )"
+          formula_sha256="$(
+            jq -r '.assets[] | select(.name == "git-slop.rb") | .digest' \
+              "$release_path" |
+              sed 's/^sha256://'
+          )"
+          manifest_url="$(
+            jq -r '.assets[] | select(.name == "release-manifest.json") | .browser_download_url' \
+              "$release_path"
+          )"
+          manifest_sha256="$(
+            jq -r '.assets[] | select(.name == "release-manifest.json") | .digest' \
+              "$release_path" |
+              sed 's/^sha256://'
+          )"
+          checksums_url="$(
+            jq -r '.assets[] | select(.name == "SHA256SUMS") | .browser_download_url' \
+              "$release_path"
+          )"
+
+          test "$formula_url" = "${release_base}/git-slop.rb"
+          test "$manifest_url" = "${release_base}/release-manifest.json"
+          test "$checksums_url" = "${release_base}/SHA256SUMS"
+          [[ "$formula_sha256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$manifest_sha256" =~ ^[0-9a-f]{64}$ ]]
+
+          {
+            echo "formula_url=$formula_url"
+            echo "formula_sha256=$formula_sha256"
+            echo "manifest_url=$manifest_url"
+            echo "manifest_sha256=$manifest_sha256"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Verify release assets and crates.io source
         env:
           RELEASE_VERSION: ${{ inputs.version }}
           RELEASE_REVISION: ${{ inputs.revision }}
-          FORMULA_URL: ${{ inputs.formula_url }}
-          FORMULA_SHA256: ${{ inputs.formula_sha256 }}
-          MANIFEST_URL: ${{ inputs.manifest_url }}
-          MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}
+          FORMULA_URL: ${{ steps.release.outputs.formula_url }}
+          FORMULA_SHA256: ${{ steps.release.outputs.formula_sha256 }}
+          MANIFEST_URL: ${{ steps.release.outputs.manifest_url }}
+          MANIFEST_SHA256: ${{ steps.release.outputs.manifest_sha256 }}
           CRATE_URL: ${{ inputs.crate_url }}
           CRATE_SHA256: ${{ inputs.crate_sha256 }}
         run: scripts/verify-git-slop-release.sh "$RUNNER_TEMP/git-slop-release"
@@ -95,10 +169,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ inputs.version }}
           RELEASE_REVISION: ${{ inputs.revision }}
-          FORMULA_URL: ${{ inputs.formula_url }}
-          FORMULA_SHA256: ${{ inputs.formula_sha256 }}
-          MANIFEST_URL: ${{ inputs.manifest_url }}
-          MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}
+          FORMULA_URL: ${{ steps.release.outputs.formula_url }}
+          FORMULA_SHA256: ${{ steps.release.outputs.formula_sha256 }}
+          MANIFEST_URL: ${{ steps.release.outputs.manifest_url }}
+          MANIFEST_SHA256: ${{ steps.release.outputs.manifest_sha256 }}
           CRATE_URL: ${{ inputs.crate_url }}
           CRATE_SHA256: ${{ inputs.crate_sha256 }}
         run: |
@@ -314,8 +388,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ inputs.version }}
           RELEASE_REVISION: ${{ inputs.revision }}
-          FORMULA_SHA256: ${{ inputs.formula_sha256 }}
-          MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}
+          FORMULA_SHA256: ${{ steps.release.outputs.formula_sha256 }}
+          MANIFEST_SHA256: ${{ steps.release.outputs.manifest_sha256 }}
           CRATE_SHA256: ${{ inputs.crate_sha256 }}
           BRANCH: ${{ steps.branch.outputs.branch }}
           HEAD_SHA: ${{ steps.branch.outputs.head_sha }}
@@ -343,9 +417,12 @@ jobs:
           schema-3 manifest identity, crates.io package digest and VCS metadata,
           and an exact allowlisted Ruby formula before creating this branch.
 
-          The explicitly dispatched \`brew test-bot\` run must pass for this
-          exact head. A human must then apply the \`pr-pull\` label to publish
-          bottles and merge the update.
+          The explicitly dispatched \`Release git-slop bottles\` run must pass
+          for this exact head. A human must then apply the \`pr-pull\` label to
+          publish bottles and merge the update.
+
+          Release-approval consolidation is tracked in
+          https://github.com/coreycoto/git-slop/issues/73.
           EOF
 
           owner="${GITHUB_REPOSITORY_OWNER}"
@@ -386,17 +463,18 @@ jobs:
           TRUSTED_HEAD_SHA: ${{ steps.branch.outputs.head_sha }}
           RELEASE_VERSION: ${{ inputs.version }}
           RELEASE_REVISION: ${{ inputs.revision }}
-          FORMULA_URL: ${{ inputs.formula_url }}
-          FORMULA_SHA256: ${{ inputs.formula_sha256 }}
-          MANIFEST_URL: ${{ inputs.manifest_url }}
-          MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}
+          FORMULA_URL: ${{ steps.release.outputs.formula_url }}
+          FORMULA_SHA256: ${{ steps.release.outputs.formula_sha256 }}
+          MANIFEST_URL: ${{ steps.release.outputs.manifest_url }}
+          MANIFEST_SHA256: ${{ steps.release.outputs.manifest_sha256 }}
           CRATE_URL: ${{ inputs.crate_url }}
           CRATE_SHA256: ${{ inputs.crate_sha256 }}
         run: |
           dispatch_tests() {
-            gh workflow run tests.yml \
+            gh workflow run release-tests.yml \
               --repo "$GITHUB_REPOSITORY" \
               --ref "$BRANCH" \
+              -f pull_request="${{ steps.pull-request.outputs.number }}" \
               -f trusted_head_sha="$TRUSTED_HEAD_SHA" \
               -f version="$RELEASE_VERSION" \
               -f revision="$RELEASE_REVISION" \
@@ -416,7 +494,7 @@ jobs:
 
           runs_json="$RUNNER_TEMP/git-slop-test-runs.json"
           gh api --method GET \
-            "repos/${GITHUB_REPOSITORY}/actions/workflows/tests.yml/runs" \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/release-tests.yml/runs" \
             -f event=workflow_dispatch \
             -f head_sha="$TRUSTED_HEAD_SHA" \
             -f per_page=100 \
@@ -506,6 +584,7 @@ jobs:
           TEST_REUSED: ${{ steps.tests.outputs.reused }}
           TEST_STATE: ${{ steps.tests.outputs.state }}
           TEST_RUN_URL: ${{ steps.tests.outputs.run_url }}
+          RELEASE_RESOLUTION: ${{ steps.release.outcome }}
         run: |
           {
             echo "## git-slop tap handoff"
@@ -515,6 +594,10 @@ jobs:
             echo "- Changed: \`${CHANGED}\`"
             echo "- Reused existing exact head: \`${REUSED}\`"
             echo "- Already published on main: \`${PUBLISHED}\`"
+            echo "- Public release resolution: \`${RELEASE_RESOLUTION}\`"
+            if [[ "$RELEASE_RESOLUTION" == "failure" ]]; then
+              echo "- Recovery: publish the exact GitHub Release and redispatch the same four immutable inputs; the receiver is idempotent."
+            fi
             if [[ -n "$PULL_REQUEST" ]]; then
               echo "- Pull request: #${PULL_REQUEST}"
               echo "- Reused exact-head test run: \`${TEST_REUSED}\`"
@@ -522,7 +605,7 @@ jobs:
               if [[ -n "$TEST_RUN_URL" ]]; then
                 echo "- Exact-head test run: ${TEST_RUN_URL}"
               fi
-              echo "- Next gate: wait for the newest exact-head test run to succeed, then have a human apply \`pr-pull\`."
+              echo "- Next gate: wait for the exact-head release test to succeed, then have a human apply \`pr-pull\`."
             elif [[ "$PUBLISHED" == "true" ]]; then
               echo "- Result: this exact release is already on main; the formula and its bottle block were preserved."
             fi

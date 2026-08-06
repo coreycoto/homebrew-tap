@@ -63,6 +63,9 @@ jobs:
           git config --global --add safe.directory "${GITHUB_WORKSPACE}"
           test "$(git rev-parse HEAD)" = "$TEST_HEAD_SHA"
 
+      - name: Verify trusted release workflow contracts
+        run: scripts/verify-workflow-contracts.sh
+
       - name: Detect formula changes
         id: formula_change
         run: |

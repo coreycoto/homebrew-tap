@@ -61,8 +61,7 @@ instead of creating commit churn. It also reuses the newest exact-head test
 dispatch while that run is queued or in progress, or after it succeeds while
 both one-day bottle artifacts remain available. A missing, failed, cancelled,
 or artifact-expired run is dispatched again. Receiver, release-test, and
-publication jobs are serialized, and the receiver refuses to rewrite a legacy
-formula PR while its human `pr-pull` gate is present.
+publication jobs share one concurrency lock.
 
 If the public release is still unavailable after the bounded wait, publish the
 exact GitHub Release and redispatch the same four immutable inputs. The
@@ -94,7 +93,7 @@ One one-time tap setting is required under **Settings → Actions → General**:
 enable **Allow GitHub Actions to create and approve pull requests**. The
 receiver requests only its explicit job-level write permissions; the
 repository-wide default can remain read-only. The workflow does not approve
-its own PR and never adds the `pr-pull` label.
+its own PR or add a publication label.
 
 An upstream dispatch is equivalent to:
 
@@ -138,25 +137,41 @@ accepting a previously selected run ID: no later release test can finish and
 supersede the successful artifact set during publication. Ordinary pull-request
 and `main` tests retain per-ref concurrency.
 
-## Human Publication Gate
+## Trusted-main Publication Gate
 
-Automation stops at a tested pull request. After every required exact-head test
-is green, a human reviews the formula and provenance and applies the
-`pr-pull` label. That label is the only normal bottle/merge gate.
+Successful completion of `Release git-slop bottles` starts `publish.yml`
+through GitHub's default-branch `workflow_run` boundary. There is no label or
+manual tap-side publication action in the normal release path. The protected
+upstream release environment remains the sole Actions approval.
 
-`publish.yml` re-reads the current PR head, requires the `pr-pull` label, allows
-only the formula and release-metadata files, and re-verifies every release
-input. Immediately before `brew pr-pull`, it also requires the newest
-`release-tests.yml` run for the exact trusted head to be completed
-successfully with both expected, unexpired bottle artifacts. Artifacts uploaded
-by a failed run are rejected. This binds the human authorization and bottle
-inputs to the label event's exact commit before calling
-`brew pr-pull --head-sha=<exact SHA>`. Homebrew then writes the bottle block,
-pushes the resulting commit to `main`, and removes the automation branch only
-when it still points to the published head. A failed job may be rerun as the
-same trusted label event. If the formula head changes, a human must remove and
-reapply `pr-pull`; there is no privileged manual-dispatch path.
+The publisher runs only from trusted `main` and accepts only a completed,
+successful `workflow_dispatch` execution of the canonical
+`.github/workflows/release-tests.yml` from this repository on an
+`automation/git-slop-v<version>` branch. It binds the event's exact run ID,
+attempt, head SHA, and branch to the Actions API record and then:
 
-The remaining migration to a trusted-main automatic publisher, with the
-protected upstream release environment as the sole Actions approval, is
-tracked in [coreycoto/git-slop#73](https://github.com/coreycoto/git-slop/issues/73).
+- resolves exactly one open same-repository pull request created by
+  `github-actions[bot]` against `main`
+- requires the event head to have the exact current `main` commit as its sole
+  parent
+- allows exactly `Formula/git-slop.rb` and
+  `metadata/git-slop-release.json`, with no rename
+- re-verifies the immutable public release, crate provenance, metadata, and
+  byte-exact source formula without checking out or executing pull-request code
+- requires the triggering run to remain the newest dispatch for the exact head
+  and to own exactly two unexpired, SHA-256-digested bottle artifacts with
+  matching repository, branch, and head provenance
+
+All handoff workflows share the publication concurrency lock. Homebrew's
+`brew pr-pull` does not accept a run ID and resolves the newest matching check
+suite itself; the exact-head newest-run check plus that shared lock prevents a
+later completed run from superseding the event-bound artifacts during
+publication. Homebrew writes the bottle block, pushes the result to `main`, and
+the workflow deletes the automation branch only when it still points to the
+published head.
+
+The publisher is idempotent. If exact metadata and the canonical two-platform
+bottle formula are already on `main`, a repeated successful event verifies that
+terminal state and exits without changing the repository. Failed publisher
+runs may be rerun from the same trusted event; a changed formula head requires
+a new exact-head release-test completion.

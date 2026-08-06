@@ -326,17 +326,6 @@ jobs:
               exit 0
             fi
 
-            labeled_prs="$(
-              gh api --method GET "repos/${GITHUB_REPOSITORY}/pulls" \
-                -f state=open \
-                -f base=main \
-                -f head="${GITHUB_REPOSITORY_OWNER}:${branch}" \
-                --jq '[.[] | select(any(.labels[]?; .name == "pr-pull"))] | length'
-            )"
-            if [[ "$labeled_prs" != "0" ]]; then
-              echo "The existing formula PR carries the human pr-pull gate; refusing to rewrite its head." >&2
-              exit 1
-            fi
           fi
 
           git switch --force-create "$branch" origin/main
@@ -418,11 +407,10 @@ jobs:
           and an exact allowlisted Ruby formula before creating this branch.
 
           The explicitly dispatched \`Release git-slop bottles\` run must pass
-          for this exact head. A human must then apply the \`pr-pull\` label to
-          publish bottles and merge the update.
-
-          Release-approval consolidation is tracked in
-          https://github.com/coreycoto/git-slop/issues/73.
+          for this exact head. Its successful completion starts the trusted-main
+          publisher, which re-verifies the current parent, two-file allowlist,
+          immutable release identity, and exact unexpired bottle artifacts before
+          publishing.
           EOF
 
           owner="${GITHUB_REPOSITORY_OWNER}"
@@ -605,7 +593,7 @@ jobs:
               if [[ -n "$TEST_RUN_URL" ]]; then
                 echo "- Exact-head test run: ${TEST_RUN_URL}"
               fi
-              echo "- Next gate: wait for the exact-head release test to succeed, then have a human apply \`pr-pull\`."
+              echo "- Next gate: the trusted-main publisher starts automatically when the exact-head release test succeeds."
             elif [[ "$PUBLISHED" == "true" ]]; then
               echo "- Result: this exact release is already on main; the formula and its bottle block were preserved."
             fi

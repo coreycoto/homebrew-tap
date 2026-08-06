@@ -167,7 +167,7 @@ jobs:
         id: git_setup
         uses: Homebrew/actions/git-user-config@df4b09108a1de9d6f995fe68f302b3f68bd6d2ef # 2026.07.20.1
 
-      - name: Require the newest exact-head test run to be green
+      - name: Require the newest exact-head release test to be green
         env:
           GH_TOKEN: ${{ github.token }}
           BRANCH: ${{ steps.pull-request.outputs.branch }}
@@ -175,7 +175,7 @@ jobs:
         run: |
           runs_json="$RUNNER_TEMP/git-slop-test-runs.json"
           gh api --method GET \
-            "repos/${GITHUB_REPOSITORY}/actions/workflows/tests.yml/runs" \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/release-tests.yml/runs" \
             -f event=workflow_dispatch \
             -f head_sha="$HEAD_SHA" \
             -f per_page=100 \
@@ -198,7 +198,7 @@ jobs:
               ' "$runs_json"
           )"
           if [[ -z "$run_json" ]]; then
-            echo "No tests.yml workflow_dispatch run exists for exact head ${HEAD_SHA}." >&2
+            echo "No release-tests.yml run exists for exact head ${HEAD_SHA}." >&2
             exit 1
           fi
 
@@ -213,7 +213,7 @@ jobs:
               .status == "completed" and
               .conclusion == "success"
             ' <<<"$run_json" >/dev/null || {
-              echo "Newest exact-head tests.yml run is not completed successfully: ${run_url}" >&2
+              echo "Newest exact-head release-tests.yml run is not completed successfully: ${run_url}" >&2
               exit 1
             }
 
@@ -234,7 +234,7 @@ jobs:
           echo "Using successful exact-head bottle run ${run_url}."
 
       - name: Pull exact-head bottles
-        # tests.yml workflow_dispatch runs share this workflow's concurrency
+        # release-tests.yml runs share this workflow's concurrency
         # group. Homebrew may therefore re-resolve the newest check suite here
         # without a later completed run superseding the successful run above.
         env:
@@ -248,7 +248,7 @@ jobs:
             --debug \
             --tap="$GITHUB_REPOSITORY" \
             --head-sha="$HEAD_SHA" \
-            --workflows=tests.yml \
+            --workflows=release-tests.yml \
             "$PULL_REQUEST"
 
       - name: Push bottle and formula commits

@@ -21,26 +21,25 @@ package resources.
 
 ## Release Handoff
 
-`coreycoto/git-slop` publishes these immutable inputs before requesting a tap
-update:
+After crates.io publication, `coreycoto/git-slop` requests a tap update with
+the four immutable facts available at that protected release boundary:
 
-- `git-slop.rb`
-- schema-3 `release-manifest.json`
-- `SHA256SUMS`
-- the canonical `git-slop-<version>.crate` URL and SHA-256 from crates.io
+- the strict release version
 - the exact 40-character source revision embedded in the crate
+- the canonical `git-slop-<version>.crate` URL
+- the crates.io package SHA-256
 
 The upstream release then dispatches `.github/workflows/update-git-slop.yml`
 on this repository's `main` branch with these required inputs:
 
 - `version`
 - `revision`
-- `formula_url` and `formula_sha256`
-- `manifest_url` and `manifest_sha256`
 - `crate_url` and `crate_sha256`
 
-The receiver accepts only canonical `coreycoto/git-slop` GitHub Release URLs
-and the canonical static.crates.io URL. Before writing a branch, it verifies:
+The receiver waits up to approximately two hours for the exact public GitHub
+Release. After publication it requires one canonical `git-slop.rb`,
+`release-manifest.json`, and `SHA256SUMS` asset with GitHub-provided SHA-256
+digests, derives their canonical URLs and digests, and then verifies:
 
 - the dispatch ran from the exact current `main` commit
 - strict version, revision, and digest formats
@@ -54,15 +53,21 @@ A successful verification force-updates only the automation-owned
 `automation/git-slop-v<version>` branch, commits the formula plus
 `metadata/git-slop-release.json`, and creates or updates a pull request using
 this repository's built-in `github.token`. It then explicitly dispatches
-`tests.yml` against that branch because pushes and pull requests created with a
-workflow token do not recursively start ordinary pull-request workflows.
+`release-tests.yml` against that branch because pushes and pull requests
+created with a workflow token do not recursively start ordinary pull-request
+workflows.
 An identical rerun reuses the existing exact automation-branch head and PR
 instead of creating commit churn. It also reuses the newest exact-head test
 dispatch while that run is queued or in progress, or after it succeeds while
 both one-day bottle artifacts remain available. A missing, failed, cancelled,
-or artifact-expired run is dispatched again. Receiver and publication jobs are
-serialized, and the receiver refuses to rewrite a formula PR while its human
-`pr-pull` gate is present.
+or artifact-expired run is dispatched again. Receiver, release-test, and
+publication jobs are serialized, and the receiver refuses to rewrite a legacy
+formula PR while its human `pr-pull` gate is present.
+
+If the public release is still unavailable after the bounded wait, publish the
+exact GitHub Release and redispatch the same four immutable inputs. The
+receiver is idempotent and reuses a matching branch, PR, and successful
+unexpired artifacts rather than creating commit churn.
 
 After `brew pr-pull` has merged the formula and bottle block, redispatching the
 same release is a no-op when the immutable metadata on `main` matches exactly.
@@ -99,19 +104,18 @@ GH_TOKEN="$HOMEBREW_TAP_DISPATCH_TOKEN" gh workflow run update-git-slop.yml \
   --ref main \
   -f version="$version" \
   -f revision="$revision" \
-  -f formula_url="$formula_url" \
-  -f formula_sha256="$formula_sha256" \
-  -f manifest_url="$manifest_url" \
-  -f manifest_sha256="$manifest_sha256" \
   -f crate_url="$crate_url" \
   -f crate_sha256="$crate_sha256"
 ```
 
 ## Formula And Bottle Tests
 
-`tests.yml` continues to test ordinary pull requests and `main`, and also
-accepts the receiver's explicit trusted head SHA and release inputs. For the
-dispatched release head it:
+`tests.yml` continues to test ordinary pull requests and `main` with read-only
+permissions. Release publication does not consume its artifacts.
+
+The dispatch-only `release-tests.yml` accepts the receiver's exact pull
+request, trusted head SHA, and derived immutable release inputs. For that
+release head it:
 
 - re-verifies the exact release assets, crate, manifest, formula, and changed
   file set
@@ -125,9 +129,9 @@ dispatched release head it:
   separate macOS runner
 
 Bottle artifacts are retained for one day and remain associated with the exact
-pull-request head tested by `brew pr-pull`. Failed jobs can still upload
-diagnostic bottle artifacts because upload runs under `always()`, but those
-artifacts are never publishable. Release-only `tests.yml` dispatches share the
+`release-tests.yml` run and pull-request head tested by `brew pr-pull`. Failed
+jobs can still upload diagnostic bottle artifacts because upload runs under
+`always()`, but those artifacts are never publishable. Release tests share the
 receiver/publisher concurrency lock. This matters because Homebrew resolves the
 newest workflow check suite again when `brew pr-pull` starts instead of
 accepting a previously selected run ID: no later release test can finish and
@@ -143,7 +147,7 @@ is green, a human reviews the formula and provenance and applies the
 `publish.yml` re-reads the current PR head, requires the `pr-pull` label, allows
 only the formula and release-metadata files, and re-verifies every release
 input. Immediately before `brew pr-pull`, it also requires the newest
-`tests.yml` workflow-dispatch run for the exact trusted head to be completed
+`release-tests.yml` run for the exact trusted head to be completed
 successfully with both expected, unexpired bottle artifacts. Artifacts uploaded
 by a failed run are rejected. This binds the human authorization and bottle
 inputs to the label event's exact commit before calling
@@ -152,3 +156,7 @@ pushes the resulting commit to `main`, and removes the automation branch only
 when it still points to the published head. A failed job may be rerun as the
 same trusted label event. If the formula head changes, a human must remove and
 reapply `pr-pull`; there is no privileged manual-dispatch path.
+
+The remaining migration to a trusted-main automatic publisher, with the
+protected upstream release environment as the sole Actions approval, is
+tracked in [coreycoto/git-slop#73](https://github.com/coreycoto/git-slop/issues/73).

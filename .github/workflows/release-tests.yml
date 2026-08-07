@@ -326,3 +326,94 @@ jobs:
             echo "Upgraded git-slop retained a Python runtime dependency." >&2
             exit 1
           fi
+
+  handoff:
+    name: Dispatch trusted-main publication
+    needs:
+      - validate
+      - test-bot
+      - upgrade
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Verify the exact successful release-test run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          [[ "$TRUSTED_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          expected_branch="automation/git-slop-v${RELEASE_VERSION}"
+          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+          test "$GITHUB_REF" = "refs/heads/${expected_branch}"
+          test "$GITHUB_SHA" = "$TRUSTED_HEAD_SHA"
+          test "$GITHUB_WORKFLOW_REF" = \
+            "${GITHUB_REPOSITORY}/.github/workflows/release-tests.yml@refs/heads/${expected_branch}"
+
+          workflow_json="$RUNNER_TEMP/release-tests-workflow.json"
+          gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/release-tests.yml" \
+            > "$workflow_json"
+          workflow_id="$(jq -r .id "$workflow_json")"
+          [[ "$workflow_id" =~ ^[1-9][0-9]*$ ]]
+          test "$(jq -r .name "$workflow_json")" = \
+            "Release git-slop bottles"
+          test "$(jq -r .path "$workflow_json")" = \
+            ".github/workflows/release-tests.yml"
+          test "$(jq -r .state "$workflow_json")" = "active"
+
+          run_json="$RUNNER_TEMP/release-test-handoff.json"
+          gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            > "$run_json"
+          jq -e \
+            --argjson run_id "$GITHUB_RUN_ID" \
+            --argjson run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --argjson workflow_id "$workflow_id" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg head_sha "$TRUSTED_HEAD_SHA" \
+            --arg head_branch "$expected_branch" '
+              .id == $run_id and
+              .run_attempt == $run_attempt and
+              .workflow_id == $workflow_id and
+              .path == ".github/workflows/release-tests.yml" and
+              .event == "workflow_dispatch" and
+              .status == "in_progress" and
+              .conclusion == null and
+              .repository.full_name == $repository and
+              .head_repository.full_name == $repository and
+              .actor.login == "github-actions[bot]" and
+              .actor.type == "Bot" and
+              .triggering_actor.login == "github-actions[bot]" and
+              .triggering_actor.type == "Bot" and
+              .head_sha == $head_sha and
+              .head_branch == $head_branch
+            ' "$run_json" >/dev/null
+
+      - name: Dispatch the exact run to trusted main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          dispatch_json="$RUNNER_TEMP/git-slop-bottles-ready.json"
+          jq -n \
+            --argjson run_id "$GITHUB_RUN_ID" '
+              {
+                event_type: "git-slop-bottles-ready",
+                client_payload: {run_id: $run_id}
+              }
+            ' > "$dispatch_json"
+          gh api --method POST \
+            "repos/${GITHUB_REPOSITORY}/dispatches" \
+            --input "$dispatch_json"
+
+      - name: Summarize publication handoff
+        run: |
+          {
+            echo "## Trusted-main publication handoff"
+            echo
+            echo "- Release-test run ID: \`${GITHUB_RUN_ID}\`"
+            echo "- Formula head: \`${TRUSTED_HEAD_SHA}\`"
+            echo "- Result: dispatched the exact successful run to the trusted-main publisher."
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -30,22 +30,28 @@ reject_text() {
   fi
 }
 
-require_text "${publisher}" "workflow_run:"
-require_text "${publisher}" "- Release git-slop bottles"
-require_text "${publisher}" "- completed"
-require_text "${publisher}" "- automation/git-slop-v*"
-require_text "${publisher}" "github.event.workflow_run.conclusion == 'success'"
-require_text "${publisher}" "github.event.workflow_run.event == 'workflow_dispatch'"
-require_text "${publisher}" "github.event.workflow_run.repository.full_name == github.repository"
-require_text "${publisher}" "github.event.workflow_run.head_repository.full_name == github.repository"
-require_text "${publisher}" "EVENT_RUN_ID: \${{ github.event.workflow_run.id }}"
-require_text "${publisher}" "EVENT_HEAD_SHA: \${{ github.event.workflow_run.head_sha }}"
-require_text "${publisher}" "EVENT_HEAD_BRANCH: \${{ github.event.workflow_run.head_branch }}"
+require_text "${release_tests}" "Dispatch trusted-main publication"
+require_text "${release_tests}" "repos/\${GITHUB_REPOSITORY}/dispatches"
+require_text "${release_tests}" 'event_type: "git-slop-bottles-ready"'
+require_text "${release_tests}" 'client_payload: {run_id: $run_id}'
+require_text "${release_tests}" '.status == "in_progress"'
+require_text "${release_tests}" '.actor.login == "github-actions[bot]"'
+require_text "${release_tests}" '.triggering_actor.login == "github-actions[bot]"'
+require_text "${publisher}" "repository_dispatch:"
+require_text "${publisher}" "- git-slop-bottles-ready"
+require_text "${publisher}" "EVENT_RUN_ID: \${{ github.event.client_payload.run_id }}"
+require_text "${publisher}" '.action == "git-slop-bottles-ready"'
+require_text "${publisher}" '(.client_payload | keys) == ["run_id"]'
+require_text "${publisher}" '.client_payload.run_id == $run_id'
+require_text "${publisher}" '.sender.login == "github-actions[bot]"'
+require_text "${publisher}" '.sender.login == $owner'
 require_text "${publisher}" ".github/workflows/publish.yml@refs/heads/main"
 require_text "${publisher}" "actions/workflows/release-tests.yml"
 require_text "${publisher}" 'test "$(jq -r .state "$workflow_json")" = "active"'
 require_text "${publisher}" '.workflow_id == $workflow_id'
 require_text "${publisher}" '.path == ".github/workflows/release-tests.yml"'
+require_text "${publisher}" '.status == "completed"'
+require_text "${publisher}" '.conclusion == "success"'
 require_text "${publisher}" '.actor.login == "github-actions[bot]"'
 require_text "${publisher}" '.triggering_actor.login == "github-actions[bot]"'
 require_text "${publisher}" '.parents[0].sha == $base_sha'
@@ -79,6 +85,7 @@ publish_line="$(
   die "the final current-parent and allowlist recheck must run immediately before bottle publication"
 
 reject_text "${publisher}" "pull_request_target:"
+reject_text "${publisher}" "github.event.workflow_run"
 reject_text "${publisher}" "github.event.label"
 reject_text "${publisher}" "pr-pull'"
 reject_text "${receiver}" "human pr-pull gate"
@@ -99,5 +106,7 @@ require_text "${readme}" "## Trusted-main Publication Gate"
 require_text "${readme}" "There is no label or"
 require_text "${readme}" "sole Actions approval"
 require_text "${readme}" "does not accept a run ID"
+require_text "${readme}" "repository_dispatch"
+require_text "${readme}" "exact successful run ID"
 
 echo "trusted git-slop publication workflow contracts passed"

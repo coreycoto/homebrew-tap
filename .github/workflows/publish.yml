@@ -2,16 +2,12 @@ name: Publish verified git-slop bottles
 
 run-name: >-
   Publish git-slop bottles from release-test run
-  #${{ github.event.workflow_run.id }}
+  #${{ github.event.client_payload.run_id }}
 
 on:
-  workflow_run:
-    workflows:
-      - Release git-slop bottles
+  repository_dispatch:
     types:
-      - completed
-    branches:
-      - automation/git-slop-v*
+      - git-slop-bottles-ready
 
 permissions: {}
 
@@ -25,13 +21,6 @@ defaults:
 
 jobs:
   publish:
-    if: >-
-      github.event.workflow_run.status == 'completed' &&
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'workflow_dispatch' &&
-      github.event.workflow_run.repository.full_name == github.repository &&
-      github.event.workflow_run.head_repository.full_name == github.repository &&
-      startsWith(github.event.workflow_run.head_branch, 'automation/git-slop-v')
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     permissions:
@@ -40,22 +29,33 @@ jobs:
       contents: write
       pull-requests: write
     env:
-      EVENT_RUN_ID: ${{ github.event.workflow_run.id }}
-      EVENT_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
-      EVENT_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-      EVENT_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
-      EVENT_RUN_URL: ${{ github.event.workflow_run.html_url }}
+      EVENT_RUN_ID: ${{ github.event.client_payload.run_id }}
     steps:
-      - name: Validate the trusted release-test event
+      - name: Resolve and validate the trusted release-test run
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           [[ "$EVENT_RUN_ID" =~ ^[1-9][0-9]*$ ]]
-          [[ "$EVENT_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
-          [[ "$EVENT_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$EVENT_HEAD_BRANCH" =~ ^automation/git-slop-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
           test "$GITHUB_WORKFLOW_REF" = \
             "${GITHUB_REPOSITORY}/.github/workflows/publish.yml@refs/heads/main"
+
+          jq -e \
+            --argjson run_id "$EVENT_RUN_ID" \
+            --arg owner "$GITHUB_REPOSITORY_OWNER" '
+              .action == "git-slop-bottles-ready" and
+              (.client_payload | keys) == ["run_id"] and
+              .client_payload.run_id == $run_id and
+              (
+                (
+                  .sender.login == "github-actions[bot]" and
+                  .sender.type == "Bot"
+                ) or
+                (
+                  .sender.login == $owner and
+                  .sender.type == "User"
+                )
+              )
+            ' "$GITHUB_EVENT_PATH" >/dev/null
 
           workflow_json="$RUNNER_TEMP/release-tests-workflow.json"
           gh api \
@@ -70,16 +70,45 @@ jobs:
           test "$(jq -r .state "$workflow_json")" = "active"
 
           run_json="$RUNNER_TEMP/release-test-event.json"
-          gh api \
-            "repos/${GITHUB_REPOSITORY}/actions/runs/${EVENT_RUN_ID}" \
-            > "$run_json"
+          for attempt in $(seq 1 24); do
+            gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/runs/${EVENT_RUN_ID}" \
+              > "$run_json"
+            run_status="$(jq -r .status "$run_json")"
+            case "$run_status" in
+              completed)
+                break
+                ;;
+              queued|in_progress|requested|waiting|pending)
+                if [[ "$attempt" == "24" ]]; then
+                  echo "Timed out waiting for release-test run ${EVENT_RUN_ID} to complete." >&2
+                  exit 1
+                fi
+                sleep 5
+                ;;
+              *)
+                echo "Unexpected release-test run status: ${run_status}" >&2
+                exit 1
+                ;;
+            esac
+          done
+
+          event_run_attempt="$(jq -r .run_attempt "$run_json")"
+          event_head_sha="$(jq -r .head_sha "$run_json")"
+          event_head_branch="$(jq -r .head_branch "$run_json")"
+          event_run_url="$(jq -r .html_url "$run_json")"
+          [[ "$event_run_attempt" =~ ^[1-9][0-9]*$ ]]
+          [[ "$event_head_sha" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$event_head_branch" =~ ^automation/git-slop-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          [[ "$event_run_url" == "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${EVENT_RUN_ID}" ]]
+
           jq -e \
             --argjson run_id "$EVENT_RUN_ID" \
-            --argjson run_attempt "$EVENT_RUN_ATTEMPT" \
+            --argjson run_attempt "$event_run_attempt" \
             --argjson workflow_id "$workflow_id" \
             --arg repository "$GITHUB_REPOSITORY" \
-            --arg head_sha "$EVENT_HEAD_SHA" \
-            --arg head_branch "$EVENT_HEAD_BRANCH" '
+            --arg head_sha "$event_head_sha" \
+            --arg head_branch "$event_head_branch" '
               .id == $run_id and
               .run_attempt == $run_attempt and
               .workflow_id == $workflow_id and
@@ -96,6 +125,13 @@ jobs:
               .head_sha == $head_sha and
               .head_branch == $head_branch
             ' "$run_json" >/dev/null
+
+          {
+            echo "EVENT_RUN_ATTEMPT=$event_run_attempt"
+            echo "EVENT_HEAD_SHA=$event_head_sha"
+            echo "EVENT_HEAD_BRANCH=$event_head_branch"
+            echo "EVENT_RUN_URL=$event_run_url"
+          } >> "$GITHUB_ENV"
 
       - name: Check out trusted tap main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

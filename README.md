@@ -55,7 +55,10 @@ A successful verification force-updates only the automation-owned
 this repository's built-in `github.token`. It then explicitly dispatches
 `release-tests.yml` against that branch because pushes and pull requests
 created with a workflow token do not recursively start ordinary pull-request
-workflows.
+workflows. The final successful release-test job explicitly sends a
+`repository_dispatch` containing only its exact run ID because a
+`workflow_run` chained from that workflow-token dispatch is suppressed by the
+same recursion guard.
 An identical rerun reuses the existing exact automation-branch head and PR
 instead of creating commit churn. It also reuses the newest exact-head test
 dispatch while that run is queued or in progress, or after it succeeds while
@@ -126,6 +129,8 @@ release head it:
 - rejects installed Python or libyaml runtime dependencies
 - exercises an in-place upgrade from the formula currently on `main` on a
   separate macOS runner
+- sends the exact successful run ID to the trusted-main publisher only after
+  every required validation, bottle, and upgrade job succeeds
 
 Bottle artifacts are retained for one day and remain associated with the exact
 `release-tests.yml` run and pull-request head tested by `brew pr-pull`. Failed
@@ -139,16 +144,22 @@ and `main` tests retain per-ref concurrency.
 
 ## Trusted-main Publication Gate
 
-Successful completion of `Release git-slop bottles` starts `publish.yml`
-through GitHub's default-branch `workflow_run` boundary. There is no label or
-manual tap-side publication action in the normal release path. The protected
-upstream release environment remains the sole Actions approval.
+The final successful job in `Release git-slop bottles` sends a
+`repository_dispatch` with its exact run ID, which starts `publish.yml` from
+the trusted default branch. There is no label or manual tap-side publication
+action in the normal release path. The protected upstream release environment
+remains the sole Actions approval. All three workflows share the publication
+lock, so the publisher cannot start until the release-test run has released
+that lock and reached a terminal state.
 
-The publisher runs only from trusted `main` and accepts only a completed,
-successful `workflow_dispatch` execution of the canonical
-`.github/workflows/release-tests.yml` from this repository on an
-`automation/git-slop-v<version>` branch. It binds the event's exact run ID,
-attempt, head SHA, and branch to the Actions API record and then:
+The publisher runs only from trusted `main`. It accepts a dispatch from either
+`github-actions[bot]` in the normal path or the repository owner for bounded
+recovery, but treats the payload only as an exact run-ID pointer. It loads the
+canonical `.github/workflows/release-tests.yml` execution from the Actions API,
+waits briefly if necessary, and requires a completed, successful
+`workflow_dispatch` run created and triggered by `github-actions[bot]` on an
+`automation/git-slop-v<version>` branch. It derives and binds the run attempt,
+head SHA, branch, and URL from that API record and then:
 
 - resolves exactly one open same-repository pull request created by
   `github-actions[bot]` against `main`
@@ -173,5 +184,7 @@ published head.
 The publisher is idempotent. If exact metadata and the canonical two-platform
 bottle formula are already on `main`, a repeated successful event verifies that
 terminal state and exits without changing the repository. Failed publisher
-runs may be rerun from the same trusted event; a changed formula head requires
-a new exact-head release-test completion.
+runs may be recovered by resending `git-slop-bottles-ready` with the same exact
+successful run ID; the publisher revalidates the run and all current state
+instead of trusting the sender's payload. A changed formula head requires a new
+exact-head release-test completion.

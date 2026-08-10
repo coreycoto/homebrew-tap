@@ -42,6 +42,7 @@ class GitSlop < Formula
   def install
     system "cargo", "install", *std_cargo_args
     man1.install "man/git-slop.1"
+    generate_completions_from_executable(bin/"git-slop", "completions")
   end
 
   test do
@@ -181,25 +182,6 @@ expect_verifier_failure() {
 
 run_verifier "${test_root}/success"
 
-expected_formula="${test_root}/success/expected-git-slop.rb"
-if grep -Eq '^  version ' "${expected_formula}"
-then
-  echo "trusted formula template unexpectedly contains a version stanza" >&2
-  exit 1
-fi
-grep -Fx \
-  "    assert_match \"\\\"source_revision\\\": \\\"${revision}\\\"\", build_info" \
-  "${expected_formula}" >/dev/null || {
-  echo "trusted formula template is missing the canonical source_revision assertion" >&2
-  exit 1
-}
-grep -Fx \
-  '    assert_match "\"source_dirty\": false", build_info' \
-  "${expected_formula}" >/dev/null || {
-  echo "trusted formula template is missing the canonical source_dirty assertion" >&2
-  exit 1
-}
-
 if "${repo_root}/scripts/verify-git-slop-formula-state.sh" \
    "${fixture_root}/git-slop.rb" \
    "${fixture_root}/git-slop.rb"
@@ -302,16 +284,21 @@ awk -v revision="${revision}" '
 ' "${fixture_root}/git-slop.rb" >"${test_root}/git-slop-percent-assertions.rb"
 mv "${test_root}/git-slop-percent-assertions.rb" "${fixture_root}/git-slop.rb"
 write_checksums
-expect_verifier_failure \
-  "${test_root}/percent-assertions" \
-  "formula with percent-literal JSON assertions unexpectedly passed verification"
+run_verifier "${test_root}/percent-assertions"
 
 write_formula
-printf '\n# unexpected formula code\n' >>"${fixture_root}/git-slop.rb"
+printf '\n# additional non-contract metadata is allowed\n' >>"${fixture_root}/git-slop.rb"
+write_checksums
+run_verifier "${test_root}/additive-metadata"
+
+write_formula
+sed 's#homepage "https://github.com/coreycoto/git-slop"#homepage "https://example.com/untrusted"#' \
+  "${fixture_root}/git-slop.rb" >"${test_root}/git-slop-identity-drift.rb"
+mv "${test_root}/git-slop-identity-drift.rb" "${fixture_root}/git-slop.rb"
 write_checksums
 expect_verifier_failure \
-  "${test_root}/formula-drift" \
-  "formula drift unexpectedly passed verification"
+  "${test_root}/formula-identity-drift" \
+  "formula identity drift unexpectedly passed verification"
 
 write_formula
 write_manifest "${bad_revision}"

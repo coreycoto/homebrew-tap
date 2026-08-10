@@ -47,7 +47,12 @@ digests, derives their canonical URLs and digests, and then verifies:
 - unique matching formula and manifest entries in `SHA256SUMS`
 - schema-3 manifest identity and `crate_source`
 - the crate digest and clean `.cargo_vcs_info.json`
-- byte-for-byte equality with the allowlisted native Rust formula template
+- valid Ruby syntax and the formula's identity-critical source, dependency,
+  install, and provenance-test semantics
+
+The signed release asset and its checksums remain authoritative for additive
+formula behavior such as completion generation, so the tap does not duplicate
+the entire upstream formula template.
 
 A successful verification force-updates only the automation-owned
 `automation/git-slop-v<version>` branch, commits the formula plus

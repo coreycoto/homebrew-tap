@@ -126,7 +126,6 @@ formula_path="${output_dir}/git-slop.rb"
 manifest_path="${output_dir}/release-manifest.json"
 checksums_path="${output_dir}/SHA256SUMS"
 crate_path="${output_dir}/git-slop-${RELEASE_VERSION}.crate"
-expected_formula_path="${output_dir}/expected-git-slop.rb"
 
 download "${FORMULA_URL}" "${formula_path}"
 download "${MANIFEST_URL}" "${manifest_path}"
@@ -202,33 +201,57 @@ tar -xOzf "${crate_path}" "${vcs_info_member}" |
   ' >/dev/null ||
   die "crate VCS metadata does not match release revision"
 
-cat >"${expected_formula_path}" <<EOF
-class GitSlop < Formula
-  desc "Deterministic repository health analysis for humans and AI agents"
-  homepage "https://github.com/coreycoto/git-slop"
-  url "${CRATE_URL}"
-  sha256 "${CRATE_SHA256}"
-  license "MIT"
-
-  depends_on "rust" => :build
-
-  def install
-    system "cargo", "install", *std_cargo_args
-    man1.install "man/git-slop.1"
-  end
-
-  test do
-    assert_match "git-slop ${RELEASE_VERSION}", shell_output("#{bin}/git-slop version")
-    build_info = shell_output("#{bin}/git-slop build-info --format json")
-    assert_match "\"source_revision\": \"${RELEASE_REVISION}\"", build_info
-    assert_match "\"source_dirty\": false", build_info
-  end
-end
-EOF
-
-cmp "${expected_formula_path}" "${formula_path}" ||
-  die "formula asset does not exactly match the trusted crates-first template"
 "${ruby_command[@]}" -c "${formula_path}" >/dev/null ||
   die "formula asset is not valid Ruby syntax"
+"${ruby_command[@]}" - \
+  "${formula_path}" \
+  "${CRATE_URL}" \
+  "${CRATE_SHA256}" \
+  "${RELEASE_VERSION}" \
+  "${RELEASE_REVISION}" <<'RUBY'
+formula_path, crate_url, crate_sha256, version, revision = ARGV
+formula = File.binread(formula_path)
+
+def require_one(formula, pattern, label)
+  matches = formula.scan(pattern)
+  abort "error: formula must contain exactly one #{label}" unless matches.length == 1
+  match = matches.first
+  match.is_a?(Array) && match.length == 1 ? match.first : match
+end
+
+require_one(formula, /^class GitSlop < Formula$/, "GitSlop formula class")
+require_one(
+  formula,
+  /^  desc "Deterministic repository health analysis for humans and AI agents"$/,
+  "canonical description"
+)
+require_one(
+  formula,
+  /^  homepage "https:\/\/github\.com\/coreycoto\/git-slop"$/,
+  "canonical homepage"
+)
+url = require_one(formula, /^  url "([^"]+)"$/, "source URL")
+sha256 = require_one(formula, /^  sha256 "([0-9a-f]{64})"$/, "source checksum")
+abort "error: formula source URL does not match the verified crate" unless url == crate_url
+abort "error: formula source checksum does not match the verified crate" unless sha256 == crate_sha256
+require_one(formula, /^  license "MIT"$/, "MIT license")
+require_one(formula, /^  depends_on "rust" => :build$/, "Rust build dependency")
+abort "error: formula must derive its version from the crate URL" if formula.match?(/^  version\b/)
+
+install = require_one(formula, /^  def install\n(.*?)^  end$/m, "install method")
+unless install.match?(/^    system "cargo", "install", \*std_cargo_args$/) &&
+    install.match?(/^    man1\.install "man\/git-slop\.1"$/)
+  abort "error: formula install method is missing the canonical Cargo or manpage installation"
+end
+
+test = require_one(formula, /^  test do\n(.*?)^  end$/m, "test block")
+unless test.include?("git-slop #{version}") &&
+    test.include?("git-slop build-info --format json") &&
+    test.include?("source_revision") &&
+    test.include?(revision) &&
+    test.match?(/source_dirty.*false/)
+  abort "error: formula test block does not prove version and source identity"
+end
+RUBY
 
 printf 'Verified git-slop %s at %s.\n' "${RELEASE_VERSION}" "${RELEASE_REVISION}"

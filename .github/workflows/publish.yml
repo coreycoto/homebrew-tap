@@ -217,6 +217,24 @@ jobs:
             echo "crate_sha256=$crate_sha256"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Require an immutable existing bottle release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ steps.metadata.outputs.version }}
+        run: |
+          release_tag="git-slop-${RELEASE_VERSION}"
+          gh api --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+            > "$RUNNER_TEMP/existing-bottle-releases.json"
+          jq -e --arg tag "$release_tag" '
+            [.[][] | select(.tag_name == $tag)] as $matches |
+            ($matches | length) == 0 or
+            (($matches | length) == 1 and
+              $matches[0].draft == false and
+              $matches[0].prerelease == false and
+              $matches[0].immutable == true)
+          ' "$RUNNER_TEMP/existing-bottle-releases.json" >/dev/null
+
       - name: Reverify release identity and exact source formula
         env:
           RELEASE_VERSION: ${{ steps.metadata.outputs.version }}
@@ -559,6 +577,30 @@ jobs:
         uses: Homebrew/actions/git-try-push@df4b09108a1de9d6f995fe68f302b3f68bd6d2ef # 2026.07.20.1
         with:
           branch: main
+
+      - name: Verify the bottle release is immutable
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ steps.metadata.outputs.version }}
+        run: |
+          release_tag="git-slop-${RELEASE_VERSION}"
+          for attempt in $(seq 1 30); do
+            if gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${release_tag}" > "$RUNNER_TEMP/bottle-release.json" 2>/dev/null &&
+              jq -e --arg tag "$release_tag" '
+                .tag_name == $tag and
+                .draft == false and
+                .prerelease == false and
+                .immutable == true
+              ' "$RUNNER_TEMP/bottle-release.json" >/dev/null
+            then
+              exit 0
+            fi
+            if test "$attempt" -lt 30; then
+              sleep 2
+            fi
+          done
+          echo "Bottle release ${release_tag} did not become immutable after publication." >&2
+          exit 1
 
       - name: Delete the exact automation branch
         if: steps.publication.outputs.published != 'true'

@@ -193,3 +193,20 @@ runs may be recovered by resending `git-slop-bottles-ready` with the same exact
 successful run ID; the publisher revalidates the run and all current state
 instead of trusting the sender's payload. A changed formula head requires a new
 exact-head release-test completion.
+
+### Bottle release immutability
+
+Repository release immutability must remain enabled before dispatching a new
+git-slop bottle release. An administrator can run this fail-closed preflight:
+
+```bash
+gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
+  repos/coreycoto/homebrew-tap/immutable-releases \
+  --jq 'select(.enabled == true)'
+```
+
+The publisher rejects an existing bottle release unless its API record reports
+`immutable: true`, and polls the newly published `git-slop-<version>` release
+until the same postcondition holds. `git-slop-0.11.8` predates enablement and
+is the only documented `immutable: false` exception; its assets must not be
+replaced.

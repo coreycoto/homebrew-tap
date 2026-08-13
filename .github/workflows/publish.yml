@@ -694,9 +694,13 @@ jobs:
               sort -z
           )
           test "${#bottle_json[@]}" = 2
-          brew bottle --merge --write \
-            --root-url="$BOTTLE_ROOT_URL" \
-            "${bottle_json[@]}"
+          for metadata in "${bottle_json[@]}"; do
+            scripts/rewrite-bottle-root-url.sh \
+              "$metadata" \
+              "$BOTTLE_ROOT_URL" \
+              "$RELEASE_VERSION"
+          done
+          brew bottle --merge --write "${bottle_json[@]}"
           grep -F "root_url \"${BOTTLE_ROOT_URL}\"" Formula/git-slop.rb
 
           mapfile -d '' bottles < <(

@@ -66,6 +66,9 @@ jobs:
       - name: Verify trusted release workflow contracts
         run: scripts/verify-workflow-contracts.sh
 
+      - name: Test bottle root URL rewriting
+        run: scripts/rewrite-bottle-root-url.test.sh
+
       - name: Detect formula changes
         id: formula_change
         run: |

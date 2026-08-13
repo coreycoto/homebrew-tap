@@ -10,6 +10,7 @@ release_tests="${repo_root}/.github/workflows/release-tests.yml"
 readme="${repo_root}/README.md"
 root_url_rewriter="${repo_root}/scripts/rewrite-bottle-root-url.sh"
 root_url_filter="${repo_root}/scripts/rewrite-bottle-root-url.jq"
+bottle_archive_verifier="${repo_root}/scripts/verify-bottle-archive.sh"
 
 die() {
   printf 'error: %s\n' "${*}" >&2
@@ -33,6 +34,7 @@ reject_text() {
 }
 
 require_text "${release_tests}" "Dispatch trusted-main publication"
+require_text "${repo_root}/.github/workflows/tests.yml" "scripts/verify-bottle-archive.test.sh"
 require_text "${release_tests}" "repos/\${GITHUB_REPOSITORY}/dispatches"
 require_text "${release_tests}" 'event_type: "git-slop-bottles-ready"'
 require_text "${release_tests}" 'client_payload: {run_id: $run_id}'
@@ -64,6 +66,11 @@ require_text "${publisher}" "--no-upload"
 require_text "${publisher}" "--retain-bottle-dir"
 require_text "${publisher}" "Merge and upload exact bottles to the draft"
 require_text "${publisher}" "scripts/rewrite-bottle-root-url.sh"
+require_text "${publisher}" 'scripts/verify-bottle-archive.sh "$bottle" "$RELEASE_VERSION"'
+require_text "${publisher}" '"git-slop--" + $version + ".arm64_tahoe.bottle.tar.gz"'
+require_text "${publisher}" '"git-slop--" + $version + ".x86_64_linux.bottle.tar.gz"'
+require_text "${bottle_archive_verifier}" 'git-slop--${version}.arm64_tahoe.bottle.tar.gz'
+require_text "${bottle_archive_verifier}" 'git-slop--${version}.x86_64_linux.bottle.tar.gz'
 require_text "${root_url_rewriter}" 'rewrite-bottle-root-url.jq'
 require_text "${root_url_filter}" 'keys == ["coreycoto/tap/git-slop"]'
 require_text "${root_url_filter}" '.["coreycoto/tap/git-slop"].formula.pkg_version == $version'

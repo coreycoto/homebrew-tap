@@ -711,7 +711,7 @@ jobs:
           test "${#bottles[@]}" = 2
           for bottle in "${bottles[@]}"; do
             name="$(basename "$bottle")"
-            [[ "$name" =~ ^git-slop-${RELEASE_VERSION}\.(arm64_tahoe|x86_64_linux)\.bottle\.tar\.gz$ ]]
+            scripts/verify-bottle-archive.sh "$bottle" "$RELEASE_VERSION"
             curl --fail-with-body --silent --show-error \
               --connect-timeout 15 --max-time 300 \
               --request POST \
@@ -764,15 +764,15 @@ jobs:
               .target_commitish == $revision and
               .prerelease == false and
               (.assets | length) == 2 and
-              ([.assets[].name] | unique | length) == 2 and
+              ([.assets[].name] | sort) == [
+                "git-slop--" + $version + ".arm64_tahoe.bottle.tar.gz",
+                "git-slop--" + $version + ".x86_64_linux.bottle.tar.gz"
+              ] and
               all(.assets[];
                 (.size | type == "number") and .size > 0 and
                 (.digest | type == "string") and
-                (.digest | test("^sha256:[0-9a-f]{64}$")) and
-                (.name | test("^git-slop-" + $version + "\\.(arm64_tahoe|x86_64_linux)\\.bottle\\.tar\\.gz$"))
-              ) and
-              ([.assets[].name | select(test("\\.arm64_tahoe\\.bottle\\.tar\\.gz$"))] | length) == 1 and
-              ([.assets[].name | select(test("\\.x86_64_linux\\.bottle\\.tar\\.gz$"))] | length) == 1
+                (.digest | test("^sha256:[0-9a-f]{64}$"))
+              )
             ' "$RUNNER_TEMP/bottle-release.json" >/dev/null
           if test "$(jq -r .draft "$RUNNER_TEMP/bottle-release.json")" = true; then
             jq -e '.immutable == false' "$RUNNER_TEMP/bottle-release.json" >/dev/null

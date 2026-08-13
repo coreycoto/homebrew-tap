@@ -223,7 +223,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ steps.metadata.outputs.version }}
         run: |
-          release_tag="git-slop-bottles-${RELEASE_VERSION}"
+          release_tag="git-slop-bottles-v2-${RELEASE_VERSION}"
           gh api --paginate --slurp \
             "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
             > "$RUNNER_TEMP/existing-bottle-releases.json"
@@ -643,6 +643,7 @@ jobs:
 
       - name: Pull the event-bound exact-head bottles
         if: steps.publication.outputs.published != 'true'
+        id: pull-bottles
         # All release handoff workflows share this concurrency group. A newer
         # exact-head test therefore cannot complete while publication runs.
         env:
@@ -666,11 +667,73 @@ jobs:
 
           brew pr-pull \
             --debug \
+            --no-upload \
+            --retain-bottle-dir \
             --tap="$GITHUB_REPOSITORY" \
             --head-sha="$EVENT_HEAD_SHA" \
             --root-url="$BOTTLE_ROOT_URL" \
             --workflows=release-tests.yml \
             "$PULL_REQUEST"
+
+      - name: Merge and upload exact bottles to the draft
+        if: steps.publication.outputs.published != 'true'
+        env:
+          BOTTLE_PATH: ${{ steps.pull-bottles.outputs.bottle_path }}
+          BOTTLE_RELEASE_ID: ${{ steps.prepare-bottle-release.outputs.release-id }}
+          BOTTLE_RELEASE_TAG: ${{ steps.bottle-release.outputs.tag }}
+          BOTTLE_ROOT_URL: https://github.com/${{ github.repository }}/releases/download/${{ steps.bottle-release.outputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+          HOMEBREW_GIT_COMMITTER_NAME: ${{ steps.git_setup.outputs.name }}
+          HOMEBREW_GIT_COMMITTER_EMAIL: ${{ steps.git_setup.outputs.email }}
+          RELEASE_VERSION: ${{ steps.metadata.outputs.version }}
+        run: |
+          test -d "$BOTTLE_PATH"
+          [[ "$BOTTLE_RELEASE_ID" =~ ^[1-9][0-9]*$ ]]
+          mapfile -d '' bottle_json < <(
+            find "$BOTTLE_PATH" -type f -name '*.bottle.json' -print0 |
+              sort -z
+          )
+          test "${#bottle_json[@]}" = 2
+          brew bottle --merge --write \
+            --root-url="$BOTTLE_ROOT_URL" \
+            "${bottle_json[@]}"
+          grep -F "root_url \"${BOTTLE_ROOT_URL}\"" Formula/git-slop.rb
+
+          mapfile -d '' bottles < <(
+            find "$BOTTLE_PATH" -type f -name '*.bottle.tar.gz' -print0 |
+              sort -z
+          )
+          test "${#bottles[@]}" = 2
+          for bottle in "${bottles[@]}"; do
+            name="$(basename "$bottle")"
+            [[ "$name" =~ ^git-slop-${RELEASE_VERSION}\.(arm64_tahoe|x86_64_linux)\.bottle\.tar\.gz$ ]]
+            curl --fail-with-body --silent --show-error \
+              --connect-timeout 15 --max-time 300 \
+              --request POST \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary "@${bottle}" \
+              "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${BOTTLE_RELEASE_ID}/assets?name=${name}" \
+              >/dev/null
+          done
+          gh api "repos/${GITHUB_REPOSITORY}/releases/${BOTTLE_RELEASE_ID}" \
+            > "$RUNNER_TEMP/uploaded-draft-bottle-release.json"
+          jq -e \
+            --arg tag "$BOTTLE_RELEASE_TAG" \
+            --argjson release_id "$BOTTLE_RELEASE_ID" '
+              .id == $release_id and
+              .tag_name == $tag and
+              .draft == true and
+              .immutable == false and
+              (.assets | length) == 2 and
+              all(.assets[];
+                (.size | type == "number") and .size > 0 and
+                (.digest | type == "string") and
+                (.digest | test("^sha256:[0-9a-f]{64}$"))
+              )
+            ' "$RUNNER_TEMP/uploaded-draft-bottle-release.json" >/dev/null
 
       - name: Push bottle and formula commits
         if: steps.publication.outputs.published != 'true'

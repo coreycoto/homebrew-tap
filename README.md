@@ -205,10 +205,12 @@ gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
   --jq 'select(.enabled == true)'
 ```
 
-The publisher creates `git-slop-bottles-<version>` as an exact-revision draft,
-passes that explicit root URL to Homebrew, and verifies the two expected
-platform assets and their GitHub digests before publication. It then polls the
-complete release until its API record reports `immutable: true`. A partial run
-remains a mutable draft that the same exact trusted handoff can refresh safely.
+The publisher creates `git-slop-bottles-v2-<version>` as an exact-revision
+draft, passes that explicit root URL to Homebrew, and keeps Homebrew's
+`pr-pull` upload disabled. The workflow merges the bottle metadata locally,
+uploads both exact artifacts to the existing draft, and verifies their GitHub
+digests before publication. It then polls the complete release until its API
+record reports `immutable: true`. A partial run remains a mutable draft that
+the same exact trusted handoff can refresh safely.
 `git-slop-0.11.8` predates enablement and remains the only documented
 `immutable: false` exception; its assets must not be replaced.

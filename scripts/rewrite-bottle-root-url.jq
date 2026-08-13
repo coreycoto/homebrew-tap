@@ -1,13 +1,17 @@
 if (
   type == "object" and
-  keys == ["git-slop"] and
-  .["git-slop"].formula.pkg_version == $version and
-  .["git-slop"].formula.path == "Formula/git-slop.rb" and
-  (.["git-slop"].bottle.root_url | type) == "string" and
-  (.["git-slop"].bottle.tags | type) == "object" and
-  (.["git-slop"].bottle.tags | length) == 1
+  keys == ["coreycoto/tap/git-slop"] and
+  .["coreycoto/tap/git-slop"].formula.name == "git-slop" and
+  .["coreycoto/tap/git-slop"].formula.pkg_version == $version and
+  .["coreycoto/tap/git-slop"].formula.tap_git_path == "Formula/git-slop.rb" and
+  .["coreycoto/tap/git-slop"].formula.tap_git_revision == $revision and
+  .["coreycoto/tap/git-slop"].formula.tap_git_remote ==
+    "https://github.com/coreycoto/homebrew-tap" and
+  (.["coreycoto/tap/git-slop"].bottle.root_url | type) == "string" and
+  (.["coreycoto/tap/git-slop"].bottle.tags | type) == "object" and
+  (.["coreycoto/tap/git-slop"].bottle.tags | length) == 1
 ) then
-  .["git-slop"].bottle.root_url = $root_url
+  .["coreycoto/tap/git-slop"].bottle.root_url = $root_url
 else
   error("unexpected git-slop bottle metadata")
 end

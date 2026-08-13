@@ -698,7 +698,8 @@ jobs:
             scripts/rewrite-bottle-root-url.sh \
               "$metadata" \
               "$BOTTLE_ROOT_URL" \
-              "$RELEASE_VERSION"
+              "$RELEASE_VERSION" \
+              "$EVENT_HEAD_SHA"
           done
           brew bottle --merge --write "${bottle_json[@]}"
           grep -F "root_url \"${BOTTLE_ROOT_URL}\"" Formula/git-slop.rb

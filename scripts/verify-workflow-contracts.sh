@@ -65,10 +65,12 @@ require_text "${publisher}" "--retain-bottle-dir"
 require_text "${publisher}" "Merge and upload exact bottles to the draft"
 require_text "${publisher}" "scripts/rewrite-bottle-root-url.sh"
 require_text "${root_url_rewriter}" 'rewrite-bottle-root-url.jq'
-require_text "${root_url_filter}" 'keys == ["git-slop"]'
-require_text "${root_url_filter}" '.["git-slop"].formula.pkg_version == $version'
-require_text "${root_url_filter}" '.["git-slop"].formula.path == "Formula/git-slop.rb"'
-require_text "${root_url_filter}" '.["git-slop"].bottle.root_url = $root_url'
+require_text "${root_url_filter}" 'keys == ["coreycoto/tap/git-slop"]'
+require_text "${root_url_filter}" '.["coreycoto/tap/git-slop"].formula.pkg_version == $version'
+require_text "${root_url_filter}" '.["coreycoto/tap/git-slop"].formula.tap_git_path == "Formula/git-slop.rb"'
+require_text "${root_url_filter}" '.["coreycoto/tap/git-slop"].formula.tap_git_revision == $revision'
+require_text "${root_url_filter}" '.["coreycoto/tap/git-slop"].formula.tap_git_remote =='
+require_text "${root_url_filter}" '.["coreycoto/tap/git-slop"].bottle.root_url = $root_url'
 require_text "${root_url_filter}" 'error("unexpected git-slop bottle metadata")'
 require_text "${publisher}" 'https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${BOTTLE_RELEASE_ID}/assets?name=${name}'
 require_text "${publisher}" "Publish the complete draft and verify immutability"

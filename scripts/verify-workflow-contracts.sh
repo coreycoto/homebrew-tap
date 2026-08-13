@@ -52,12 +52,16 @@ require_text "${publisher}" '.workflow_id == $workflow_id'
 require_text "${publisher}" '.path == ".github/workflows/release-tests.yml"'
 require_text "${publisher}" 'repos/${GITHUB_REPOSITORY}/releases?per_page=100'
 require_text "${publisher}" '[.[][] | select(.tag_name == $tag)]'
-require_text "${publisher}" 'release_tag="git-slop-bottles-${RELEASE_VERSION}"'
+require_text "${publisher}" 'release_tag="git-slop-bottles-v2-${RELEASE_VERSION}"'
 require_text "${publisher}" "Prepare exact draft bottle release"
 require_text "${publisher}" 'target_commitish: $revision'
 require_text "${publisher}" 'draft: true'
 require_text "${publisher}" '(.assets | length) == 0'
 require_text "${publisher}" '--root-url="$BOTTLE_ROOT_URL"'
+require_text "${publisher}" "--no-upload"
+require_text "${publisher}" "--retain-bottle-dir"
+require_text "${publisher}" "Merge and upload exact bottles to the draft"
+require_text "${publisher}" 'https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${BOTTLE_RELEASE_ID}/assets?name=${name}'
 require_text "${publisher}" "Publish the complete draft and verify immutability"
 require_text "${publisher}" '(.assets | length) == 2'
 require_text "${publisher}" '-F draft=false'

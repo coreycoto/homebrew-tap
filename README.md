@@ -205,8 +205,10 @@ gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
   --jq 'select(.enabled == true)'
 ```
 
-The publisher rejects an existing bottle release unless its API record reports
-`immutable: true`, and polls the newly published `git-slop-<version>` release
-until the same postcondition holds. `git-slop-0.11.8` predates enablement and
-is the only documented `immutable: false` exception; its assets must not be
-replaced.
+The publisher creates `git-slop-bottles-<version>` as an exact-revision draft,
+passes that explicit root URL to Homebrew, and verifies the two expected
+platform assets and their GitHub digests before publication. It then polls the
+complete release until its API record reports `immutable: true`. A partial run
+remains a mutable draft that the same exact trusted handoff can refresh safely.
+`git-slop-0.11.8` predates enablement and remains the only documented
+`immutable: false` exception; its assets must not be replaced.

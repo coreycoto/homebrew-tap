@@ -217,23 +217,48 @@ jobs:
             echo "crate_sha256=$crate_sha256"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Require an immutable existing bottle release
+      - name: Resolve exact bottle release state
+        id: bottle-release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ steps.metadata.outputs.version }}
         run: |
-          release_tag="git-slop-${RELEASE_VERSION}"
+          release_tag="git-slop-bottles-${RELEASE_VERSION}"
           gh api --paginate --slurp \
             "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
             > "$RUNNER_TEMP/existing-bottle-releases.json"
-          jq -e --arg tag "$release_tag" '
-            [.[][] | select(.tag_name == $tag)] as $matches |
-            ($matches | length) == 0 or
-            (($matches | length) == 1 and
-              $matches[0].draft == false and
-              $matches[0].prerelease == false and
-              $matches[0].immutable == true)
-          ' "$RUNNER_TEMP/existing-bottle-releases.json" >/dev/null
+          jq --arg tag "$release_tag" \
+            '[.[][] | select(.tag_name == $tag)]' \
+            "$RUNNER_TEMP/existing-bottle-releases.json" \
+            > "$RUNNER_TEMP/matching-bottle-releases.json"
+          match_count="$(jq 'length' "$RUNNER_TEMP/matching-bottle-releases.json")"
+          test "$match_count" -le 1
+          if test "$match_count" = 0; then
+            state=absent
+            release_id=
+          else
+            jq -e --arg tag "$release_tag" --arg revision "$EVENT_HEAD_SHA" '
+              .[0].tag_name == $tag and
+              .[0].target_commitish == $revision and
+              .[0].prerelease == false and
+              (
+                (.[0].draft == true and .[0].immutable == false) or
+                (.[0].draft == false and .[0].immutable == true)
+              )
+            ' "$RUNNER_TEMP/matching-bottle-releases.json" >/dev/null
+            release_id="$(jq -r '.[0].id' "$RUNNER_TEMP/matching-bottle-releases.json")"
+            [[ "$release_id" =~ ^[1-9][0-9]*$ ]]
+            if test "$(jq -r '.[0].draft' "$RUNNER_TEMP/matching-bottle-releases.json")" = true; then
+              state=draft
+            else
+              state=immutable
+            fi
+          fi
+          {
+            echo "release-id=$release_id"
+            echo "state=$state"
+            echo "tag=$release_tag"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Reverify release identity and exact source formula
         env:
@@ -267,6 +292,24 @@ jobs:
           else
             echo "published=false" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Require compatible formula and bottle release state
+        env:
+          BOTTLE_RELEASE_STATE: ${{ steps.bottle-release.outputs.state }}
+          FORMULA_PUBLISHED: ${{ steps.publication.outputs.published }}
+        run: |
+          case "${FORMULA_PUBLISHED}:${BOTTLE_RELEASE_STATE}" in
+            false:absent|false:draft|true:draft|true:immutable)
+              ;;
+            false:immutable)
+              echo "An immutable bottle release exists before its formula was published." >&2
+              exit 1
+              ;;
+            *)
+              echo "Unexpected formula/bottle release state: ${FORMULA_PUBLISHED}:${BOTTLE_RELEASE_STATE}" >&2
+              exit 1
+              ;;
+          esac
 
       - name: Resolve and verify the unique automation pull request
         id: pull-request
@@ -476,6 +519,61 @@ jobs:
         id: git_setup
         uses: Homebrew/actions/git-user-config@df4b09108a1de9d6f995fe68f302b3f68bd6d2ef # 2026.07.20.1
 
+      - name: Prepare exact draft bottle release
+        if: steps.publication.outputs.published != 'true'
+        id: prepare-bottle-release
+        env:
+          BOTTLE_RELEASE_ID: ${{ steps.bottle-release.outputs.release-id }}
+          BOTTLE_RELEASE_STATE: ${{ steps.bottle-release.outputs.state }}
+          BOTTLE_RELEASE_TAG: ${{ steps.bottle-release.outputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if test "$BOTTLE_RELEASE_STATE" = absent; then
+            jq -n \
+              --arg tag "$BOTTLE_RELEASE_TAG" \
+              --arg revision "$EVENT_HEAD_SHA" '
+                {
+                  tag_name: $tag,
+                  target_commitish: $revision,
+                  name: $tag,
+                  body: "Verified Homebrew bottles for the exact git-slop release.",
+                  draft: true,
+                  prerelease: false
+                }
+              ' > "$RUNNER_TEMP/create-bottle-release.json"
+            gh api --method POST \
+              "repos/${GITHUB_REPOSITORY}/releases" \
+              --input "$RUNNER_TEMP/create-bottle-release.json" \
+              > "$RUNNER_TEMP/draft-bottle-release.json"
+            BOTTLE_RELEASE_ID="$(jq -r .id "$RUNNER_TEMP/draft-bottle-release.json")"
+          else
+            gh api "repos/${GITHUB_REPOSITORY}/releases/${BOTTLE_RELEASE_ID}" \
+              > "$RUNNER_TEMP/draft-bottle-release.json"
+          fi
+          [[ "$BOTTLE_RELEASE_ID" =~ ^[1-9][0-9]*$ ]]
+          jq -e \
+            --arg tag "$BOTTLE_RELEASE_TAG" \
+            --arg revision "$EVENT_HEAD_SHA" \
+            --argjson release_id "$BOTTLE_RELEASE_ID" '
+              .id == $release_id and
+              .tag_name == $tag and
+              .target_commitish == $revision and
+              .draft == true and
+              .prerelease == false and
+              .immutable == false
+            ' "$RUNNER_TEMP/draft-bottle-release.json" >/dev/null
+          jq -r '.assets[].id' "$RUNNER_TEMP/draft-bottle-release.json" |
+            while read -r asset_id; do
+              [[ "$asset_id" =~ ^[1-9][0-9]*$ ]]
+              gh api --method DELETE \
+                "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}"
+            done
+          gh api "repos/${GITHUB_REPOSITORY}/releases/${BOTTLE_RELEASE_ID}" \
+            > "$RUNNER_TEMP/empty-draft-bottle-release.json"
+          jq -e '.draft == true and (.assets | length) == 0' \
+            "$RUNNER_TEMP/empty-draft-bottle-release.json" >/dev/null
+          echo "release-id=$BOTTLE_RELEASE_ID" >> "$GITHUB_OUTPUT"
+
       - name: Recheck current parent, exact head, pull request, and allowlist
         if: steps.publication.outputs.published != 'true'
         env:
@@ -548,6 +646,7 @@ jobs:
         # All release handoff workflows share this concurrency group. A newer
         # exact-head test therefore cannot complete while publication runs.
         env:
+          BOTTLE_ROOT_URL: https://github.com/${{ github.repository }}/releases/download/${{ steps.bottle-release.outputs.tag }}
           HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_GIT_COMMITTER_NAME: ${{ steps.git_setup.outputs.name }}
           HOMEBREW_GIT_COMMITTER_EMAIL: ${{ steps.git_setup.outputs.email }}
@@ -569,6 +668,7 @@ jobs:
             --debug \
             --tap="$GITHUB_REPOSITORY" \
             --head-sha="$EVENT_HEAD_SHA" \
+            --root-url="$BOTTLE_ROOT_URL" \
             --workflows=release-tests.yml \
             "$PULL_REQUEST"
 
@@ -578,20 +678,51 @@ jobs:
         with:
           branch: main
 
-      - name: Verify the bottle release is immutable
+      - name: Publish the complete draft and verify immutability
         env:
+          BOTTLE_RELEASE_ID: ${{ steps.prepare-bottle-release.outputs.release-id || steps.bottle-release.outputs.release-id }}
+          BOTTLE_RELEASE_TAG: ${{ steps.bottle-release.outputs.tag }}
           GH_TOKEN: ${{ github.token }}
           RELEASE_VERSION: ${{ steps.metadata.outputs.version }}
         run: |
-          release_tag="git-slop-${RELEASE_VERSION}"
+          [[ "$BOTTLE_RELEASE_ID" =~ ^[1-9][0-9]*$ ]]
+          gh api "repos/${GITHUB_REPOSITORY}/releases/${BOTTLE_RELEASE_ID}" \
+            > "$RUNNER_TEMP/bottle-release.json"
+          jq -e \
+            --arg tag "$BOTTLE_RELEASE_TAG" \
+            --arg revision "$EVENT_HEAD_SHA" \
+            --arg version "$RELEASE_VERSION" '
+              .tag_name == $tag and
+              .target_commitish == $revision and
+              .prerelease == false and
+              (.assets | length) == 2 and
+              ([.assets[].name] | unique | length) == 2 and
+              all(.assets[];
+                (.size | type == "number") and .size > 0 and
+                (.digest | type == "string") and
+                (.digest | test("^sha256:[0-9a-f]{64}$")) and
+                (.name | test("^git-slop-" + $version + "\\.(arm64_tahoe|x86_64_linux)\\.bottle\\.tar\\.gz$"))
+              ) and
+              ([.assets[].name | select(test("\\.arm64_tahoe\\.bottle\\.tar\\.gz$"))] | length) == 1 and
+              ([.assets[].name | select(test("\\.x86_64_linux\\.bottle\\.tar\\.gz$"))] | length) == 1
+            ' "$RUNNER_TEMP/bottle-release.json" >/dev/null
+          if test "$(jq -r .draft "$RUNNER_TEMP/bottle-release.json")" = true; then
+            jq -e '.immutable == false' "$RUNNER_TEMP/bottle-release.json" >/dev/null
+            gh api --method PATCH \
+              "repos/${GITHUB_REPOSITORY}/releases/${BOTTLE_RELEASE_ID}" \
+              -F draft=false \
+              > "$RUNNER_TEMP/published-bottle-release.json"
+          else
+            jq -e '.immutable == true' "$RUNNER_TEMP/bottle-release.json" >/dev/null
+          fi
           for attempt in $(seq 1 30); do
-            if gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${release_tag}" > "$RUNNER_TEMP/bottle-release.json" 2>/dev/null &&
-              jq -e --arg tag "$release_tag" '
+            if gh api "repos/${GITHUB_REPOSITORY}/releases/${BOTTLE_RELEASE_ID}" > "$RUNNER_TEMP/immutable-bottle-release.json" 2>/dev/null &&
+              jq -e --arg tag "$BOTTLE_RELEASE_TAG" '
                 .tag_name == $tag and
                 .draft == false and
                 .prerelease == false and
                 .immutable == true
-              ' "$RUNNER_TEMP/bottle-release.json" >/dev/null
+              ' "$RUNNER_TEMP/immutable-bottle-release.json" >/dev/null
             then
               exit 0
             fi
@@ -599,7 +730,7 @@ jobs:
               sleep 2
             fi
           done
-          echo "Bottle release ${release_tag} did not become immutable after publication." >&2
+          echo "Bottle release ${BOTTLE_RELEASE_TAG} did not become immutable after publication." >&2
           exit 1
 
       - name: Delete the exact automation branch

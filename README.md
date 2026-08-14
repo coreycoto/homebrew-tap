@@ -132,8 +132,9 @@ release head it:
 - checks `git-slop version` and `git-slop build-info --format json` against the
   exact version and clean source revision
 - rejects installed Python or libyaml runtime dependencies
-- exercises an in-place upgrade from the formula currently on `main` on a
-  separate macOS runner
+- installs the formula currently on `main` from source, then exercises an
+  in-place source upgrade on a separate macOS runner so historic bottle URL
+  naming changes cannot block release qualification
 - sends the exact successful run ID to the trusted-main publisher only after
   every required validation, bottle, and upgrade job succeeds
 

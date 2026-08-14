@@ -34,6 +34,7 @@ reject_text() {
 }
 
 require_text "${release_tests}" "Dispatch trusted-main publication"
+require_text "${release_tests}" "brew install --build-from-source coreycoto/tap/git-slop"
 require_text "${repo_root}/.github/workflows/tests.yml" "scripts/verify-bottle-archive.test.sh"
 require_text "${release_tests}" "repos/\${GITHUB_REPOSITORY}/dispatches"
 require_text "${release_tests}" 'event_type: "git-slop-bottles-ready"'

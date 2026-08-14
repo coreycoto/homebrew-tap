@@ -296,13 +296,13 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install the prior formula, then upgrade from source
+      - name: Install the prior formula from source, then upgrade from source
         run: |
           test "$GITHUB_SHA" = "$TRUSTED_HEAD_SHA"
           test "$(git rev-parse HEAD)" = "$TRUSTED_HEAD_SHA"
           cp Formula/git-slop.rb "$RUNNER_TEMP/git-slop-new.rb"
           git show origin/main:Formula/git-slop.rb > Formula/git-slop.rb
-          brew install coreycoto/tap/git-slop
+          brew install --build-from-source coreycoto/tap/git-slop
           prior_version="$(git-slop version)"
           test "$prior_version" != "git-slop ${RELEASE_VERSION}"
 

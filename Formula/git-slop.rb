@@ -5,6 +5,12 @@ class GitSlop < Formula
   sha256 "314707f62c24d5608348c82d04342d31487f7cc46b574bc9191dc08550ae1a46"
   license "MIT"
 
+  bottle do
+    root_url "https://github.com/coreycoto/homebrew-tap/releases/download/git-slop-bottles-v2-0.14.0"
+    sha256 cellar: :any_skip_relocation, arm64_tahoe:  "81ad0eb50602b197b14a22ca02f888feb093c94256e1feeec0259a74b00d370f"
+    sha256 cellar: :any,                 x86_64_linux: "fc3e03441c2980105881d7fbdb7ef82af419900a12cff6999658cf778e1c4f45"
+  end
+
   depends_on "rust" => :build
 
   def install

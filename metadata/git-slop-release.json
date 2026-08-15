@@ -1,18 +1,18 @@
 {
   "schema_version": 1,
   "project": "git-slop",
-  "version": "0.14.0",
-  "revision": "52991bca3944391fbdfacbaa7fb568a8645d9f8e",
+  "version": "0.15.0",
+  "revision": "ad5cdc08768f68a870807aa52c8f32f6512353ad",
   "formula": {
-    "url": "https://github.com/coreycoto/git-slop/releases/download/v0.14.0/git-slop.rb",
-    "sha256": "771b8d9dc7eb5fcbf0ff056a6b20c4baf39dd571d36cca71a9bd174433220f30"
+    "url": "https://github.com/coreycoto/git-slop/releases/download/v0.15.0/git-slop.rb",
+    "sha256": "f857d6dcad78285c32f35cb88b4e626abca17f05009fdfc58725503aca02a6f1"
   },
   "release_manifest": {
-    "url": "https://github.com/coreycoto/git-slop/releases/download/v0.14.0/release-manifest.json",
-    "sha256": "178480c52d36e79f2bc0c691f66efa1ffc6a4d36a667f3c8249cb42c518bca60"
+    "url": "https://github.com/coreycoto/git-slop/releases/download/v0.15.0/release-manifest.json",
+    "sha256": "2d7786926b0222266278fe4bbdb640c37f4f9754f15c82fa708270ae7d1db5fa"
   },
   "crate_source": {
-    "url": "https://static.crates.io/crates/git-slop/git-slop-0.14.0.crate",
-    "sha256": "314707f62c24d5608348c82d04342d31487f7cc46b574bc9191dc08550ae1a46"
+    "url": "https://static.crates.io/crates/git-slop/git-slop-0.15.0.crate",
+    "sha256": "140a8232ba75fcf0bbb03e406dd1d4ce9a7034a4913728faf547595126dfe190"
   }
 }

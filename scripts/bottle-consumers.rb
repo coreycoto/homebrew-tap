@@ -14,7 +14,13 @@ module BottleConsumers
   def self.load(path, version, root_url)
     raise "invalid release version" unless version.match?(/\A(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)\z/)
 
-    formula = Formulary.factory(Pathname.new(path).realpath)
+    # Keep the installed tap's lexical path: CI links that path to the
+    # workspace, while Homebrew rejects arbitrary realpaths outside Taps.
+    tap_path = Tap.fetch("coreycoto/tap").path
+    relative = Pathname.new(path).realpath.relative_path_from(tap_path.realpath)
+    raise "formula must belong to the installed coreycoto/tap" if relative.each_filename.include?("..")
+
+    formula = Formulary.factory(tap_path/relative)
     spec = formula.bottle_specification
     raise "unexpected formula identity" unless formula.name == "git-slop" && formula.pkg_version.to_s == version
     raise "unexpected bottle root URL" unless spec.root_url == root_url

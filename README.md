@@ -5,7 +5,12 @@ and [Codex](https://openai.com/codex/).
 
 ## git-slop
 
-Supported platforms are Apple Silicon macOS and Linux.
+Supported bottle platforms are Apple Silicon macOS (Tahoe 26 baseline) and
+Linux x86-64. Keep one `arm64_tahoe` bottle rather than one build per macOS
+release. Homebrew can select it on newer compatible Apple Silicon macOS,
+including Golden Gate; compatibility still requires testing. Bottle-selection
+tests are not a substitute for running the binary on a new OS. Do not relabel
+a Tahoe build as an older macOS bottle or use `all:` for native code.
 
 ```bash
 brew tap coreycoto/tap
@@ -118,7 +123,14 @@ GH_TOKEN="$HOMEBREW_TAP_DISPATCH_TOKEN" gh workflow run update-git-slop.yml \
 ## Formula And Bottle Tests
 
 `tests.yml` continues to test ordinary pull requests and `main` with read-only
-permissions. Release publication does not consume its artifacts.
+permissions. Release publication does not consume its artifacts. It also runs
+`scripts/bottle-consumers.test.rb` through real Homebrew on both existing
+runners. A loopback HTTP fixture checks Homebrew's generated URLs, cold-cache
+downloads, archive contents, 404s for double-hyphen assets, missing-platform
+assets, and checksum failures. On macOS it exercises Tahoe and Golden Gate
+bottle selection without adding another bottle variant. The release metadata
+tests reject wrong digests, URLs, identities, duplicate/missing assets and
+unsafe draft/public states, and execute the workflow's actual recovery gate.
 
 The dispatch-only `release-tests.yml` accepts the receiver's exact pull
 request, trusted head SHA, and derived immutable release inputs. For that
@@ -183,13 +195,18 @@ All handoff workflows share the publication concurrency lock. Homebrew's
 `brew pr-pull` does not accept a run ID and resolves the newest matching check
 suite itself; the exact-head newest-run check plus that shared lock prevents a
 later completed run from superseding the event-bound artifacts during
-publication. Homebrew writes the bottle block, pushes the result to `main`, and
-the workflow deletes the automation branch only when it still points to the
-published head.
+publication. Homebrew writes the candidate bottle block locally. The publisher
+then verifies and publishes the complete immutable release, downloads both
+bottles through Homebrew with a fresh cache and no GitHub credentials, and
+verifies their checksums before pushing the formula to `main`. The final push
+rechecks the exact base/head and never force-pushes or rebases onto an untested
+`main`. Branch cleanup happens only after a successful push and only when the
+automation branch still points to the published head.
 
 The publisher is idempotent. If exact metadata and the canonical two-platform
 bottle formula are already on `main`, a repeated successful event verifies that
-terminal state and exits without changing the repository. Failed publisher
+terminal state, including both public bottle downloads, and exits without
+changing the repository. Failed publisher
 runs may be recovered by resending `git-slop-bottles-ready` with the same exact
 successful run ID; the publisher revalidates the run and all current state
 instead of trusting the sender's payload. A changed formula head requires a new
@@ -206,15 +223,49 @@ gh api -H 'X-GitHub-Api-Version: 2026-03-10' \
   --jq 'select(.enabled == true)'
 ```
 
-The publisher creates `git-slop-bottles-v2-<version>` as an exact-revision
+The publisher creates `git-slop-v<version>` as an exact-revision
 draft and keeps Homebrew's `pr-pull` upload disabled. Because `brew bottle
 --merge` reads the root URL from each bottle JSON file, the workflow validates
 the exact qualified tap, formula path, and tested revision in each metadata
 file, then rewrites only the root URL to the precreated draft's URL before
-merging the bottle block. It then uploads both
-exact artifacts to the existing draft, verifies their GitHub digests, publishes
-the release, and polls until its API record reports `immutable: true`. A
-partial run remains a mutable draft that the same exact trusted handoff can
-refresh safely.
+merging the bottle block. `scripts/bottle-consumers.rb` derives asset names,
+URLs and checksums from that final formula using Homebrew itself. Local archives
+use `git-slop--<version>...`; ordinary release download URLs use
+`git-slop-<version>...`. The publisher uploads the original verified bytes under
+the consumer names, not the local basenames, and requires GitHub's asset
+digests and URLs to match the formula before and after publication.
+
+For example, a new release uses:
+
+```text
+.../releases/download/git-slop-v0.16.1/git-slop-0.16.1.arm64_tahoe.bottle.tar.gz
+```
+
+An interruption before publication leaves a draft that the exact trusted
+handoff may refresh. An interruption after publication but before the formula
+push leaves an immutable release that the same handoff must reuse without
+uploading, deleting, renaming or replacing assets. Recovery revalidates the
+original artifact bytes against the formula and the immutable release, repeats
+the anonymous consumer downloads, and only then attempts the formula push.
+The exact-head and unexpired-artifact requirements still apply. If those are
+no longer satisfied, stop and resolve recovery explicitly; never mutate an
+immutable release or retarget its tag to force a retry.
+
+The simplified convention applies to new publications. Existing release tags,
+assets and formula URLs are not renamed in place. In particular, merging this
+publisher repair does **not** republish the broken `git-slop-bottles-v2-0.16.0`
+assets or change the current `Formula/git-slop.rb` to an unpublished URL. Use
+the repaired pipeline for the next upstream release. A same-version 0.16.0
+repair requires a separately reviewed copy of the verified existing bytes to
+a new immutable release, consumer verification, and only then a formula URL
+change. Redispatching the receiver's identical metadata is a no-op, not that
+migration. Never disable immutability or change checksums merely to bypass the
+404. Until corrected bottles are published, an affected installed copy can be
+upgraded from the verified source formula with:
+
+```bash
+brew upgrade --build-from-source coreycoto/tap/git-slop
+```
+
 `git-slop-0.11.8` predates enablement and remains the only documented
 `immutable: false` exception; its assets must not be replaced.

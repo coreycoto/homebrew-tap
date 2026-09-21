@@ -57,7 +57,7 @@ require_text "${publisher}" '.workflow_id == $workflow_id'
 require_text "${publisher}" '.path == ".github/workflows/release-tests.yml"'
 require_text "${publisher}" 'repos/${GITHUB_REPOSITORY}/releases?per_page=100'
 require_text "${publisher}" '[.[][] | select(.tag_name == $tag)]'
-require_text "${publisher}" 'release_tag="git-slop-bottles-v2-${RELEASE_VERSION}"'
+require_text "${publisher}" 'release_tag="git-slop-v${RELEASE_VERSION}"'
 require_text "${publisher}" "Prepare exact draft bottle release"
 require_text "${publisher}" 'target_commitish: $revision'
 require_text "${publisher}" 'draft: true'
@@ -65,11 +65,9 @@ require_text "${publisher}" '(.assets | length) == 0'
 require_text "${publisher}" '--root-url="$BOTTLE_ROOT_URL"'
 require_text "${publisher}" "--no-upload"
 require_text "${publisher}" "--retain-bottle-dir"
-require_text "${publisher}" "Merge and upload exact bottles to the draft"
+require_text "${publisher}" "Merge and verify exact bottle metadata"
 require_text "${publisher}" "scripts/rewrite-bottle-root-url.sh"
 require_text "${publisher}" 'scripts/verify-bottle-archive.sh "$bottle" "$RELEASE_VERSION"'
-require_text "${publisher}" '"git-slop--" + $version + ".arm64_tahoe.bottle.tar.gz"'
-require_text "${publisher}" '"git-slop--" + $version + ".x86_64_linux.bottle.tar.gz"'
 require_text "${bottle_archive_verifier}" 'git-slop--${version}.arm64_tahoe.bottle.tar.gz'
 require_text "${bottle_archive_verifier}" 'git-slop--${version}.x86_64_linux.bottle.tar.gz'
 require_text "${root_url_rewriter}" 'rewrite-bottle-root-url.jq'
@@ -82,7 +80,7 @@ require_text "${root_url_filter}" '.["coreycoto/tap/git-slop"].bottle.root_url =
 require_text "${root_url_filter}" 'error("unexpected git-slop bottle metadata")'
 require_text "${publisher}" 'https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${BOTTLE_RELEASE_ID}/assets?name=${name}'
 require_text "${publisher}" "Publish the complete draft and verify immutability"
-require_text "${publisher}" '(.assets | length) == 2'
+require_text "${repo_root}/scripts/verify-bottle-release.jq" '(.assets | length) == 2'
 require_text "${publisher}" '-F draft=false'
 require_text "${publisher}" '.immutable == true'
 require_text "${publisher}" 'Bottle release ${BOTTLE_RELEASE_TAG} did not become immutable after publication.'
@@ -119,6 +117,39 @@ publish_line="$(
 )"
 [[ -n "${recheck_line}" && -n "${publish_line}" && "${recheck_line}" -lt "${publish_line}" ]] ||
   die "the final current-parent and allowlist recheck must run immediately before bottle publication"
+
+# Consumer names come from Homebrew; the local archive's double hyphen must
+# never be treated as the download name. Retain one Apple Silicon bottle.
+require_text "${repo_root}/scripts/bottle-consumers.rb" 'Bottle::Filename.create'
+require_text "${repo_root}/scripts/bottle-consumers.rb" '"name" => filename.url_encode'
+require_text "${repo_root}/scripts/bottle-consumers.rb" 'TAGS = %i[arm64_tahoe x86_64_linux]'
+require_text "${publisher}" 'sha256sum --check --status'
+require_text "${publisher}" '--slurpfile expected "$RUNNER_TEMP/bottle-consumers.json"'
+require_text "${publisher}" 'unset GH_TOKEN GITHUB_TOKEN HOMEBREW_GITHUB_API_TOKEN'
+require_text "${publisher}" 'HOMEBREW_CACHE="$cache"'
+require_text "${publisher}" "false:absent|false:draft|false:immutable|true:immutable)"
+require_text "${publisher}" "steps.bottle-release.outputs.state != 'immutable'"
+require_text "${publisher}" 'if test "$BOTTLE_RELEASE_STATE" != immutable; then'
+require_text "${repo_root}/.github/workflows/tests.yml" 'scripts/verify-bottle-release.test.sh'
+require_text "${repo_root}/.github/workflows/tests.yml" 'scripts/bottle-consumers.test.rb'
+reject_text "${publisher}" 'name="$(basename "$bottle")"'
+reject_text "${publisher}" 'git-try-push@'
+
+previous_line=0
+while IFS= read -r step
+do
+  line="$(grep -nF -- "- name: $step" "${publisher}" | cut -d: -f1)"
+  [[ "$line" =~ ^[0-9]+$ && "$line" -gt "$previous_line" ]] ||
+    die "publication step missing, duplicated, or out of order: $step"
+  previous_line="$line"
+done <<'STEPS'
+Resolve exact Homebrew consumer URLs
+Verify and upload consumer-named bottles
+Publish the complete draft and verify immutability
+Verify public Homebrew downloads before formula push
+Recheck and push bottle and formula commits
+Delete the exact automation branch
+STEPS
 
 reject_text "${publisher}" "pull_request_target:"
 reject_text "${publisher}" "github.event.workflow_run"

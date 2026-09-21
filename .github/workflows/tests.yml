@@ -72,6 +72,18 @@ jobs:
       - name: Test bottle archive identity
         run: scripts/verify-bottle-archive.test.sh
 
+      - name: Test bottle publication states and digests
+        run: scripts/verify-bottle-release.test.sh
+
+      - name: Test actual Homebrew consumer downloads
+        run: |
+          cache="$(mktemp -d)"
+          trap 'rm -rf -- "$cache"' EXIT
+          unset GH_TOKEN GITHUB_TOKEN HOMEBREW_GITHUB_API_TOKEN
+          unset HOMEBREW_BOTTLE_DOMAIN HOMEBREW_ARTIFACT_DOMAIN HOMEBREW_ARTIFACT_DOMAIN_NO_FALLBACK
+          HOMEBREW_CACHE="$cache" HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_CURL_RETRIES=0 \
+            brew ruby -- scripts/bottle-consumers.test.rb
+
       - name: Detect formula changes
         id: formula_change
         run: |

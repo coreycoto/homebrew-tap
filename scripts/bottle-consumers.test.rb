@@ -71,7 +71,10 @@ rescue IOError, Errno::EBADF
 end
 
 begin
-  Dir.mktmpdir("bottle-consumer-fixtures-") do |dir|
+  # Exercise the real trusted-tap loader without disabling Homebrew's path
+  # protections. Temporary fixtures are removed before later tap audits.
+  fixture_root = Tap.fetch("coreycoto/tap").path/"Formula"
+  Dir.mktmpdir("bottle-consumer-fixtures-", fixture_root) do |dir|
     payloads = BottleConsumers::TAGS.to_h { |tag| [tag, archive_bytes(tag)] }
     fixture = lambda do |name, mutation = nil|
       root = "http://127.0.0.1:#{port}/#{name}"

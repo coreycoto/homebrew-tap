@@ -8,7 +8,7 @@ fixture_dir="$(mktemp -d)"
 trap 'rm -rf -- "$fixture_dir"' EXIT
 
 version="0.12.1"
-root_url="https://github.com/coreycoto/homebrew-tap/releases/download/git-slop-bottles-v2-${version}"
+root_url="https://github.com/coreycoto/homebrew-tap/releases/download/git-slop-v${version}"
 metadata="${fixture_dir}/git-slop.bottle.json"
 revision="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 

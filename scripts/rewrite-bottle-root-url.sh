@@ -18,7 +18,7 @@ revision="$4"
 
 [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
 [[ "${revision}" =~ ^[0-9a-f]{40}$ ]]
-expected_root_url="https://github.com/coreycoto/homebrew-tap/releases/download/git-slop-bottles-v2-${version}"
+expected_root_url="https://github.com/coreycoto/homebrew-tap/releases/download/git-slop-v${version}"
 test "${root_url}" = "${expected_root_url}"
 test -f "${metadata}"
 

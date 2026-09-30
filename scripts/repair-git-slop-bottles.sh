@@ -150,11 +150,11 @@ jq -e --arg tag "${release_tag}" --arg revision "${release_revision}" '
 draft="$(jq -r .draft "${work}/release.json")"
 if test "${draft}" = true
 then
-  jq -e --slurpfile expected "${work}/expected.json" '
-    all(.assets[]; . as $asset |
-      [$expected[0][] | select(.name == $asset.name and .url == $asset.browser_download_url and
-        ("sha256:" + .sha256) == $asset.digest and $asset.state == "uploaded" and $asset.size > 0)] | length == 1)
-  ' "${work}/release.json" >/dev/null
+  jq -e --slurpfile expected "${work}/expected.json" \
+    --arg tag "${release_tag}" --arg revision "${release_revision}" \
+    --argjson release_id "${release_id}" --argjson require_published false \
+    --argjson allow_partial true \
+    -f "${repo_root}/scripts/verify-bottle-release.jq" "${work}/release.json" >/dev/null
   while IFS= read -r record
   do
     name="$(jq -er .name <<<"${record}")"

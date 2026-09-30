@@ -23,6 +23,7 @@ check() {
   jq -e --slurpfile expected "${fixture_dir}/consumers.json" \
     --arg tag git-slop-v0.16.0 --arg revision bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
     --argjson release_id 42 --argjson require_published "${1:-false}" \
+    --argjson allow_partial "${2:-false}" \
     -f "${repo_root}/scripts/verify-bottle-release.jq" "${fixture_dir}/check.json" >/dev/null
 }
 cp "${fixture_dir}/release.json" "${fixture_dir}/check.json"
@@ -39,6 +40,49 @@ fi
 jq '.draft = false | .immutable = true' "${fixture_dir}/release.json" >"${fixture_dir}/check.json"
 check false
 check true
+
+# GitHub assigns temporary untagged URLs to new drafts until publication.
+jq '.assets[].browser_download_url |= sub("git-slop-v0.16.0"; "untagged-0123456789abcdefabcd")' \
+  "${fixture_dir}/release.json" >"${fixture_dir}/check.json"
+check false
+cp "${fixture_dir}/check.json" "${fixture_dir}/draft-urls.json"
+jq '.assets = .assets[:1]' "${fixture_dir}/draft-urls.json" >"${fixture_dir}/check.json"
+check false true
+jq '.assets = []' "${fixture_dir}/draft-urls.json" >"${fixture_dir}/check.json"
+check false true
+
+draft_mutations=(
+  '.draft = false | .immutable = true'
+  '.assets[0].browser_download_url |= sub("coreycoto/homebrew-tap"; "untrusted/tap")'
+  '.assets[0].browser_download_url |= sub("untagged-0123456789abcdefabcd"; "untagged-invalid")'
+  '.assets[0].browser_download_url |= sub("arm64_tahoe"; "arm64_sonoma")'
+  '.assets += [.assets[0]]'
+  '.assets[0].digest = ("sha256:" + ("c" * 64))'
+)
+for mutation in "${draft_mutations[@]}"
+do
+  jq "${mutation}" "${fixture_dir}/draft-urls.json" >"${fixture_dir}/check.json"
+  set +e
+  check false true
+  status=$?
+  set -e
+  if [[ "${status}" == 0 ]]
+  then
+    echo "accepted invalid draft URL or partial asset state: ${mutation}" >&2
+    exit 1
+  fi
+done
+# The same provisional URLs must fail full verification after publication.
+jq '.draft = false | .immutable = true' "${fixture_dir}/draft-urls.json" >"${fixture_dir}/check.json"
+set +e
+check true
+status=$?
+set -e
+if [[ "${status}" == 0 ]]
+then
+  echo 'published release accepted provisional draft URLs' >&2
+  exit 1
+fi
 
 mutations=(
   '.id = 43'
@@ -105,4 +149,4 @@ do
   done
 done
 
-echo 'Bottle release verification tests passed (draft/public recovery and 15 negative cases).'
+echo 'Bottle release verification tests passed (draft/public recovery, provisional URLs, partial drafts and negative cases).'

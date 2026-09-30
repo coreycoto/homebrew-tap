@@ -58,7 +58,7 @@ end
 if $PROGRAM_NAME == __FILE__
   mode, path, version, root_url = ARGV
   abort "usage: bottle-consumers.rb manifest|fetch FORMULA VERSION ROOT_URL" if
-    ARGV.length != 4 || !%w[manifest fetch].include?(mode)
+    ARGV.length != 4 || %w[manifest fetch].exclude?(mode)
 
   entries = BottleConsumers.load(path, version, root_url)
   BottleConsumers.fetch(entries) if mode == "fetch"

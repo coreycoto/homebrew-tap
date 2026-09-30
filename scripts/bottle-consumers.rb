@@ -48,8 +48,9 @@ module BottleConsumers
   def self.fetch(entries, timeout: 300)
     entries.each do |record, bottle|
       # There is deliberately no source-build fallback at this boundary.
+      # Homebrew verifies the downloaded Pathname inside fetch; a separate
+      # zero-argument verify_download_integrity call is not a supported API.
       bottle.fetch(verify_download_integrity: true, timeout: timeout)
-      bottle.verify_download_integrity
       warn "Verified public bottle: #{record.fetch('url')}"
     end
   end

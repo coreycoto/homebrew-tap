@@ -67,6 +67,7 @@ case "${1:-}" in
     live_main="${live_main%%$'\t'*}"
     test "${head_sha}" = "${GITHUB_SHA}"
     test "${live_main}" = "${GITHUB_SHA}"
+    release_revision="${GITHUB_SHA}"
     ;;
   *)
     echo "usage: repair-git-slop-bottles.sh rewrite FORMULA | publish | verify" >&2
@@ -86,6 +87,7 @@ rewrite "${formula}"
 brew ruby -- "${repo_root}/scripts/bottle-consumers.rb" manifest \
   "${formula}" "${version}" "${release_root}" >"${work}/expected.json"
 
+echo "Verifying the original immutable ${legacy_tag} release."
 gh api "repos/${repository}/releases/tags/${legacy_tag}" >"${work}/legacy.json"
 legacy_id="$(jq -er .id "${work}/legacy.json")"
 jq --arg root "${legacy_root}" \
@@ -115,18 +117,33 @@ jq -e 'length <= 1' "${work}/matches.json" >/dev/null
 match_count="$(jq length "${work}/matches.json")"
 if test "${match_count}" = 0
 then
+  # GitHub's job token cannot create a tag whose workflow files differ from
+  # default-branch workflows. Tag the current trusted migration commit; the
+  # legacy release and unchanged bytes retain the original build provenance.
+  echo "Creating ${release_tag} at trusted main ${release_revision}."
   gh api --method POST "repos/${repository}/releases" \
-    -f tag_name="${release_tag}" -f target_commitish="${revision}" \
+    -f tag_name="${release_tag}" -f target_commitish="${release_revision}" \
     -f name="git-slop ${version} bottles" \
     -f body="Verified byte-for-byte copies of the immutable ${legacy_tag} bottles, published under Homebrew consumer filenames." \
     -F draft=true -F prerelease=false >"${work}/release.json"
 else
   jq '.[0]' "${work}/matches.json" >"${work}/release.json"
+  # A retry may occur on a newer main after this release became immutable.
+  # Its producer must be an ancestor with this exact formula and metadata;
+  # never retarget an existing tag or accept an unrelated producer commit.
+  release_revision="$(jq -er .target_commitish "${work}/release.json")"
+  [[ "${release_revision}" =~ ^[0-9a-f]{40}$ ]]
+  git merge-base --is-ancestor "${release_revision}" HEAD
+  git show "${release_revision}:Formula/git-slop.rb" >"${work}/producer.rb"
+  git show "${release_revision}:metadata/git-slop-release.json" >"${work}/producer-metadata.json"
+  rewrite "${work}/producer.rb"
+  cmp "${work}/producer.rb" "${formula}"
+  cmp "${work}/producer-metadata.json" "${work}/metadata.json"
 fi
 release_id="$(jq -er .id "${work}/release.json")"
 # A retry may only add missing assets to the exact draft. Published assets are
 # immutable and must already be the complete expected set.
-jq -e --arg tag "${release_tag}" --arg revision "${revision}" '
+jq -e --arg tag "${release_tag}" --arg revision "${release_revision}" '
   .tag_name == $tag and .target_commitish == $revision and .prerelease == false and
   ((.draft == true and .immutable == false) or (.draft == false and .immutable == true))
 ' "${work}/release.json" >/dev/null
@@ -155,7 +172,7 @@ then
 fi
 gh api "repos/${repository}/releases/${release_id}" >"${work}/release.json"
 jq -e --slurpfile expected "${work}/expected.json" \
-  --arg tag "${release_tag}" --arg revision "${revision}" \
+  --arg tag "${release_tag}" --arg revision "${release_revision}" \
   --argjson release_id "${release_id}" --argjson require_published false \
   -f "${repo_root}/scripts/verify-bottle-release.jq" "${work}/release.json" >/dev/null
 draft="$(jq -r .draft "${work}/release.json")"
@@ -167,7 +184,7 @@ for attempt in $(seq 1 30)
 do
   gh api "repos/${repository}/releases/${release_id}" >"${work}/release.json"
   if jq -e --slurpfile expected "${work}/expected.json" \
-     --arg tag "${release_tag}" --arg revision "${revision}" \
+     --arg tag "${release_tag}" --arg revision "${release_revision}" \
      --argjson release_id "${release_id}" --argjson require_published true \
         -f "${repo_root}/scripts/verify-bottle-release.jq" "${work}/release.json" >/dev/null
   then

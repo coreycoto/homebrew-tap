@@ -74,6 +74,9 @@ jobs:
           persist-credentials: false
       - name: Install and test the repaired bottle with its original provenance
         run: |
+          tap_path="$(brew --repo coreycoto/tap)"
+          test "$(git -C "$tap_path" rev-parse HEAD)" = "$GITHUB_SHA"
+          cd "$tap_path"
           scripts/repair-git-slop-bottles.sh rewrite Formula/git-slop.rb
           scripts/repair-git-slop-bottles.sh verify
           unset GH_TOKEN GITHUB_TOKEN HOMEBREW_GITHUB_API_TOKEN

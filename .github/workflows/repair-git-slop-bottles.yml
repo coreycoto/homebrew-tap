@@ -1,0 +1,123 @@
+name: Repair immutable git-slop 0.16.0 bottles
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/repair-git-slop-bottles.yml
+      - scripts/repair-git-slop-bottles.sh
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: git-slop-formula-publication
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+
+jobs:
+  publish:
+    name: Verify and copy the original immutable bytes
+    if: github.repository == 'coreycoto/homebrew-tap' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - name: Set up Homebrew
+        uses: Homebrew/actions/setup-homebrew@df4b09108a1de9d6f995fe68f302b3f68bd6d2ef # 2026.07.20.1
+        with:
+          brew-gh-api-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Check out the exact trusted main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Publish verified copies and check anonymous Homebrew downloads
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/repair-git-slop-bottles.sh publish
+
+  install:
+    name: Install repaired bottle (${{ matrix.name }})
+    needs: publish
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS Apple Silicon
+            os: macos-26
+          - name: Linux x86-64
+            os: ubuntu-latest
+            container:
+              image: >-
+                ghcr.io/homebrew/brew@sha256:9df6f3bf046e72dbe5c89cf665afbb4c5a09112ed0152c75ca51dbf5def13aba
+              options: --privileged
+    runs-on: ${{ matrix.os }}
+    container: ${{ fromJSON(toJSON(matrix.container)) }} # zizmor: ignore[unpinned-images]
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Set up Homebrew
+        uses: Homebrew/actions/setup-homebrew@df4b09108a1de9d6f995fe68f302b3f68bd6d2ef # 2026.07.20.1
+        with:
+          brew-gh-api-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Check out the exact trusted main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Install and test the repaired bottle with its original provenance
+        run: |
+          scripts/repair-git-slop-bottles.sh rewrite Formula/git-slop.rb
+          scripts/repair-git-slop-bottles.sh verify
+          unset GH_TOKEN GITHUB_TOKEN HOMEBREW_GITHUB_API_TOKEN
+          unset HOMEBREW_BOTTLE_DOMAIN HOMEBREW_ARTIFACT_DOMAIN HOMEBREW_ARTIFACT_DOMAIN_NO_FALLBACK
+          export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_FROM_API=1
+          brew install --force-bottle coreycoto/tap/git-slop
+          brew test coreycoto/tap/git-slop
+          git-slop build-info --format json | jq -e '
+            .source_revision == "a28f73e97887184c05252c6947bb3fbcd324feae" and
+            .source_dirty == false
+          '
+
+  update-formula:
+    name: Update formula after both native installs pass
+    needs: install
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Set up Homebrew
+        uses: Homebrew/actions/setup-homebrew@df4b09108a1de9d6f995fe68f302b3f68bd6d2ef # 2026.07.20.1
+        with:
+          brew-gh-api-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Check out the exact trusted main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Reverify public bottles and push only the root URL change
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          scripts/repair-git-slop-bottles.sh rewrite Formula/git-slop.rb
+          scripts/repair-git-slop-bottles.sh verify
+          if git diff --quiet; then
+            echo "The corrected formula is already on main."
+            exit 0
+          fi
+          test "$(git diff --name-only)" = Formula/git-slop.rb
+          test "$(git diff --numstat)" = $'1\t1\tFormula/git-slop.rb'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Formula/git-slop.rb
+          git commit -m 'git-slop: repair 0.16.0 bottle consumer URLs'
+          live_main="$(git ls-remote origin refs/heads/main | awk 'NR == 1 { print $1 }')"
+          test "$live_main" = "$GITHUB_SHA"
+          git push origin HEAD:refs/heads/main

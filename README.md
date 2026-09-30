@@ -251,17 +251,21 @@ The exact-head and unexpired-artifact requirements still apply. If those are
 no longer satisfied, stop and resolve recovery explicitly; never mutate an
 immutable release or retarget its tag to force a retry.
 
-The simplified convention applies to new publications. Existing release tags,
-assets and formula URLs are not renamed in place. In particular, merging this
-publisher repair does **not** republish the broken `git-slop-bottles-v2-0.16.0`
-assets or change the current `Formula/git-slop.rb` to an unpublished URL. Use
-the repaired pipeline for the next upstream release. A same-version 0.16.0
-repair requires a separately reviewed copy of the verified existing bytes to
-a new immutable release, consumer verification, and only then a formula URL
-change. Redispatching the receiver's identical metadata is a no-op, not that
-migration. Never disable immutability or change checksums merely to bypass the
-404. Until corrected bottles are published, an affected installed copy can be
-upgraded from the verified source formula with:
+The one-time `Repair immutable git-slop 0.16.0 bottles` workflow runs on main
+when its implementation is merged, and can be retried manually. It validates
+the current formula against the original successful release-test head, verifies
+the immutable legacy release and both original archives against the formula
+digests, and copies those bytes to `git-slop-v0.16.0` under Homebrew's consumer
+filenames. Existing tags and assets remain unchanged. Draft retries only add
+missing verified assets; a published release must already be complete and
+immutable. Cold-cache anonymous downloads and native forced-bottle installs
+and formula tests on macOS and Linux must all pass before the final job changes
+only the formula root URL and performs a non-force push against the exact main
+commit. Redispatching the receiver's identical metadata remains a no-op.
+
+The simplified convention also applies to subsequent upstream releases. Never
+disable immutability or change checksums merely to bypass a 404. Until corrected
+bottles are published, an affected installed copy can be upgraded from source:
 
 ```bash
 brew upgrade --build-from-source coreycoto/tap/git-slop

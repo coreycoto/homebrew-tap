@@ -121,8 +121,8 @@ publish_line="$(
 # Consumer names come from Homebrew; the local archive's double hyphen must
 # never be treated as the download name. Retain one Apple Silicon bottle.
 require_text "${repo_root}/scripts/bottle-consumers.rb" 'Bottle::Filename.create'
-require_text "${repo_root}/scripts/bottle-consumers.rb" '"name" => filename.url_encode'
-require_text "${repo_root}/scripts/bottle-consumers.rb" 'TAGS = %i[arm64_tahoe x86_64_linux]'
+require_text "${repo_root}/scripts/bottle-consumers.rb" '"name"       => filename.url_encode'
+require_text "${repo_root}/scripts/bottle-consumers.rb" 'TAGS = [:arm64_tahoe, :x86_64_linux]'
 require_text "${publisher}" 'sha256sum --check --status'
 require_text "${publisher}" '--slurpfile expected "$RUNNER_TEMP/bottle-consumers.json"'
 require_text "${publisher}" 'unset GH_TOKEN GITHUB_TOKEN HOMEBREW_GITHUB_API_TOKEN'
@@ -138,10 +138,10 @@ reject_text "${publisher}" 'git-try-push@'
 previous_line=0
 while IFS= read -r step
 do
-  line="$(grep -nF -- "- name: $step" "${publisher}" | cut -d: -f1)"
-  [[ "$line" =~ ^[0-9]+$ && "$line" -gt "$previous_line" ]] ||
-    die "publication step missing, duplicated, or out of order: $step"
-  previous_line="$line"
+  line="$(grep -nF -- "- name: ${step}" "${publisher}" | cut -d: -f1)"
+  [[ "${line}" =~ ^[0-9]+$ && "${line}" -gt "${previous_line}" ]] ||
+    die "publication step missing, duplicated, or out of order: ${step}"
+  previous_line="${line}"
 done <<'STEPS'
 Resolve exact Homebrew consumer URLs
 Verify and upload consumer-named bottles

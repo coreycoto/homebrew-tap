@@ -75,6 +75,9 @@ jobs:
       - name: Test bottle publication states and digests
         run: scripts/verify-bottle-release.test.sh
 
+      - name: Test the exact legacy bottle URL migration
+        run: scripts/repair-git-slop-bottles.test.sh
+
       - name: Test actual Homebrew consumer downloads
         run: |
           cache="$(mktemp -d)"

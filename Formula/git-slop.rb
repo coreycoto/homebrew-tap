@@ -1,15 +1,9 @@
 class GitSlop < Formula
   desc "Deterministic repository health analysis for humans and AI agents"
   homepage "https://github.com/coreycoto/git-slop"
-  url "https://static.crates.io/crates/git-slop/git-slop-0.16.2.crate"
-  sha256 "714483a1fad90e5953a1d6e90908063275aec6b74b324a50f6c440304179c834"
+  url "https://static.crates.io/crates/git-slop/git-slop-0.16.3.crate"
+  sha256 "154d2d14463ee0ab89d1fbbfe29d1e44999fb455d663d639c22e9fe0ab1197b3"
   license "MIT"
-
-  bottle do
-    root_url "https://github.com/coreycoto/homebrew-tap/releases/download/git-slop-v0.16.2"
-    sha256 cellar: :any_skip_relocation, arm64_tahoe:  "1659ecb5e3157fce3c681f97e7d86194976d448cb590db9ec352fb70c30ff527"
-    sha256 cellar: :any,                 x86_64_linux: "44bd13cf73f16242aee08c25bf2b4faf41a29b8901ccf154ef454d895c9f9248"
-  end
 
   depends_on "rust" => :build
 
@@ -20,9 +14,9 @@ class GitSlop < Formula
   end
 
   test do
-    assert_match "git-slop 0.16.2", shell_output("#{bin}/git-slop version")
+    assert_match "git-slop 0.16.3", shell_output("#{bin}/git-slop version")
     build_info = shell_output("#{bin}/git-slop build-info --format json")
-    assert_match "\"source_revision\": \"587751bc36a27958aa9d2f374df861a0745cf511\"", build_info
+    assert_match "\"source_revision\": \"9ba860d04ae83f02ebaf5356261d5624e8647dfa\"", build_info
     assert_match "\"source_dirty\": false", build_info
   end
 end
